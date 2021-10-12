@@ -1,15 +1,20 @@
-package jobs;
+package shaif.jobs;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.joda.JodaModule;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer;
-import lombok.NonNull;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.ParserContext;
+import org.springframework.expression.common.TemplateParserContext;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.jdbc.core.BeanPropertyRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -28,6 +33,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /*
 
@@ -157,38 +163,57 @@ public class JobExecutor {
     @Autowired
     DatabaseCleanerJob databaseCleanerJob;
 
-    @Value("${job-executor.schema-name:tsy")
+    public String getSchemaName() {
+        return schemaName;
+    }
+
+    @Value("${job-executor.schema-name:tsy}")
     String schemaName;
 
-    ExecutorService executorService = Executors.newFixedThreadPool(10);// new ThreadPoolExecutor(3, 10, 1, TimeUnit.SECONDS, new LinkedBlockingQueue<>());
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private ExpressionParser spelExpressionParser = new SpelExpressionParser();
+
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private ParserContext parserContext = new TemplateParserContext();
+
+    public String expandSpelExpression(String querySource) {
+        return spelExpressionParser.parseExpression(querySource, parserContext).getValue(this, String.class);
+    }
+
+    @Value("${job-executor.threads:10}")
+    int threadsCount;
+
+    ExecutorService executorService;
 
     static ObjectMapper om = new ObjectMapper();
     private String selectRowToProcessQry = "select " +
             " * " +
-            " from tsy.job where not job.is_done and not job.is_failed " +
-            " and not exists(select * from tsy.job_depends_on jdo, tsy.job j2 where job.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done)" +
+            " from #{schemaName}.job where not job.is_done and not job.is_failed " +
+            " and not exists(select * from #{schemaName}.job_depends_on jdo, #{schemaName}.job j2 where job.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done)" +
             " and job.next_run_after<=now()" +
             " for update skip locked" +
             " limit 1";
 
-    private String updateOnAbortQry = "update tsy.job set status_message=?, is_failed=true where id=?";
-    private String updateOnDoneQry = "update tsy.job set status_message=?, context=?::jsonb, is_done=true, return_value=?::jsonb where id=?";
-    private String updateOnStopQry = "update tsy.job set status_message=?, context=?::jsonb, is_failed=true where id=?";
-    private String updateOnContinueQry = "update tsy.job set status_message=?, context=?::jsonb, next_run_after=coalesce(to_timestamp(?),next_run_after) where id=?";
-    private String updateOnExceptionQry = "update tsy.job set status_message=?, is_failed=true where id=?";
-    private String insertOnSubmitQry = "insert into tsy.job(name, parameters,context,is_done,is_failed, next_run_after, status_message, parent_job_id)" +
+    private String updateOnAbortQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
+    private String updateOnDoneQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, is_done=true, return_value=?::jsonb where id=?";
+    private String updateOnStopQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, is_failed=true where id=?";
+    private String updateOnContinueQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, next_run_after=coalesce(to_timestamp(?),next_run_after) where id=?";
+    private String updateOnExceptionQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
+    private String insertOnSubmitQry = "insert into #{schemaName}.job(name, parameters,context,is_done,is_failed, next_run_after, status_message, parent_job_id)" +
             "values(?,?::jsonb,jsonb_build_object(),false,false,to_timestamp(?),'started',?) " +
             "on conflict(md5(name||parameters::text)) do nothing " +
             "returning id";
-    private String insertDependsOnQry = "insert into tsy.job_depends_on(job_id,depends_on_job_id)values(?,?)";
-    private String insertDependentOfQry = "insert into tsy.job_depends_on(job_id,depends_on_job_id)values(?,?)";
-    private String getJobStateQry = "select *, is_done as done, is_failed as failed from tsy.job where id=?";
-    protected String clearJobDependsOnQry = "delete from tsy.job_depends_on jdo\n" +
-            " where not exists(select * from tsy.job j where jdo.job_id=j.id and (not j.is_done or j.is_failed))\n" +
-            "  and not exists(select * from tsy.job j where jdo.depends_on_job_id=j.id and (not j.is_done or j.is_failed))";
-    protected String clearJobQry = "delete from tsy.job j\n" +
-            " where not exists(select * from tsy.job_depends_on jdo where j.id=jdo.job_id)\n" +
-            "   and not exists(select * from tsy.job_depends_on jdo where j.id=jdo.depends_on_job_id)" +
+    private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)";
+    private String insertDependentOfQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)";
+    private String getJobStateQry = "select *, is_done as done, is_failed as failed from #{schemaName}.job where id=?";
+    protected String clearJobDependsOnQry = "delete from #{schemaName}.job_depends_on jdo\n" +
+            " where not exists(select * from #{schemaName}.job j where jdo.job_id=j.id and (not j.is_done or j.is_failed))\n" +
+            "  and not exists(select * from #{schemaName}.job j where jdo.depends_on_job_id=j.id and (not j.is_done or j.is_failed))";
+    protected String clearJobQry = "delete from #{schemaName}.job j\n" +
+            " where not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.job_id)\n" +
+            "   and not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.depends_on_job_id)" +
             " and (j.is_done and not j.is_failed) and j.next_run_after<now()-make_interval(mins:=10)";
 
     static {
@@ -196,7 +221,9 @@ public class JobExecutor {
         JavaTimeModule javaTimeModule = new JavaTimeModule();
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy-MM-dd H:m:s")));
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'H:m:s.SSS")));
+        JodaModule jodaModule = new JodaModule();
         om.registerModule(javaTimeModule);
+        om.registerModule(jodaModule);
     }
 
     /**
@@ -208,6 +235,19 @@ public class JobExecutor {
     @PostConstruct
     private void init(){
         log.info("Starting with worker number={}", workersCount);
+        selectRowToProcessQry = expandSpelExpression(selectRowToProcessQry);
+        updateOnAbortQry = expandSpelExpression(updateOnAbortQry);
+        updateOnDoneQry = expandSpelExpression(updateOnDoneQry);
+        updateOnStopQry = expandSpelExpression(updateOnStopQry);
+        updateOnContinueQry = expandSpelExpression(updateOnContinueQry);
+        updateOnExceptionQry = expandSpelExpression(updateOnExceptionQry);
+        insertOnSubmitQry = expandSpelExpression(insertOnSubmitQry);
+        insertDependsOnQry = expandSpelExpression(insertDependsOnQry);
+        insertDependentOfQry = expandSpelExpression(insertDependentOfQry);
+        getJobStateQry = expandSpelExpression(getJobStateQry);
+        clearJobDependsOnQry = expandSpelExpression(clearJobDependsOnQry);
+        clearJobQry = expandSpelExpression(clearJobQry);
+        executorService = Executors.newFixedThreadPool(threadsCount);
         submit("databaseCleanerJob", "{}", Instant.now(), null, List.of(), List.of(), true);
         for (int i = 0; i < workersCount; i++) {
             try {
@@ -216,17 +256,33 @@ public class JobExecutor {
                 log.error("Exception:{}", ex.getMessage(), ex);
             }
         }
+
     }
 
     private final BeanPropertyRowMapper<Job> beanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
     private final DefaultTransactionAttribute transactionAttribute = new DefaultTransactionAttribute();
+    private volatile boolean stopProcessing = false;
+    private AtomicInteger activeWorkers = new AtomicInteger(0);
+
+    @SneakyThrows
+    public void shutdown(){
+        stopProcessing = true;
+        while(activeWorkers.get()>0){
+            Thread.sleep(100);
+        }
+    }
 
     private void doWork() {
         boolean incremented = false;
         boolean prevSomethingFound = false;
         Boolean somethingFound = null;
+        activeWorkers.incrementAndGet();
         try {
             while (true) {
+                if(stopProcessing){
+                    activeWorkers.decrementAndGet();
+                    return;
+                }
                 somethingFound = transactionTemplate.execute(transactionStatus ->
                         {
                             for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
@@ -283,6 +339,10 @@ public class JobExecutor {
                  */
                 try {
                     while (true) {
+                        if(stopProcessing){
+                            activeWorkers.decrementAndGet();
+                            return;
+                        }
                         final long myId = Thread.currentThread().getId();
 
                         int activeCount = 0;

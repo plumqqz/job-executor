@@ -1,4 +1,4 @@
-package jobs;
+package shaif.jobs;
 
 public class GetMoreThanOneRowFromJobTable extends RuntimeException {
     public GetMoreThanOneRowFromJobTable(String msg) {

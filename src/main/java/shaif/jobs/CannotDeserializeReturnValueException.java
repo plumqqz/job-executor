@@ -1,4 +1,4 @@
-package jobs;
+package shaif.jobs;
 
 import java.io.IOException;
 

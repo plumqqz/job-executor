@@ -1,4 +1,4 @@
-package jobs;
+package shaif.jobs;
 
 import lombok.Data;
 import lombok.NonNull;
@@ -6,7 +6,7 @@ import lombok.NonNull;
 import java.time.Duration;
 import java.time.Instant;
 
-import static jobs.JobState.Status.*;
+import static shaif.jobs.JobState.Status.*;
 
 /**
  * Состояние выполяемого задания.

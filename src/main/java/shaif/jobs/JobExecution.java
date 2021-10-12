@@ -1,4 +1,4 @@
-package jobs;
+package shaif.jobs;
 
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonIgnore;

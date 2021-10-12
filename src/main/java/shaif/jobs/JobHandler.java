@@ -1,4 +1,4 @@
-package jobs;
+package shaif.jobs;
 
 import org.springframework.beans.factory.BeanNameAware;
 
