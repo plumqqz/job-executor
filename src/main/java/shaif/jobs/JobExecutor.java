@@ -517,4 +517,17 @@ public class JobExecutor {
     public void restartJob(@NonNull Long jobId){
         jt.update(expandSpelExpression("update #{schemaName}.job set is_failed=false where id=?"),jobId);
     }
+
+    /**
+     * Run job now
+     */
+    public void runJob(@NonNull Long jobId){
+        jt.update(expandSpelExpression("update #{schemaName}.job set next_run_after=now() where id=?"),jobId);
+    }
+    /**
+     * Stop job by setting run time to infinity
+     */
+    public void stopJob(@NonNull Long jobId){
+        jt.update(expandSpelExpression("update #{schemaName}.job set next_run_after='infinity' where id=?"),jobId);
+    }
 }

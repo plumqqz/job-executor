@@ -345,4 +345,12 @@ public class Job {
     public void restart(){
         jobExecutor.restartJob(getId());
     }
+
+    public void stop(){
+        jobExecutor.stopJob(getId());
+    }
+
+    public void run(){
+        jobExecutor.runJob(getId());
+    }
 }
