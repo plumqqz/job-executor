@@ -502,6 +502,6 @@ public class JobExecutor {
      * @return задание
      */
     public Job getJobById(@NonNull Long jobId){
-        return jt.query((expandSpelExpression()"select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
+        return jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
     }
 }
