@@ -504,4 +504,12 @@ public class JobExecutor {
     public Job getJobById(@NonNull Long jobId){
         return jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
     }
+
+    /**
+     * restart failed job
+     * @return voi
+     */
+    public void restartJob(@NonNull Long jobId){
+        jt.update(expandSpelExpression("update #{schemaName}.job set is_failed=true where id=?"),jobId);
+    }
 }

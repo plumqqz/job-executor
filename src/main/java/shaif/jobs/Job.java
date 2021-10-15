@@ -341,4 +341,8 @@ public class Job {
     public void makeJobDependent(JobExecution depender){
         getJobExecutor().dependOn(depender.getJobId(), getId());
     }
+
+    public void restart(){
+        jobExecutor.restartJob(getId());
+    }
 }
