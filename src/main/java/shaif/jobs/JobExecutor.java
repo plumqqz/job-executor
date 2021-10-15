@@ -163,6 +163,9 @@ public class JobExecutor {
     @Autowired
     DatabaseCleanerJob databaseCleanerJob;
 
+    @Autowired
+    JobExecutor self;
+
     public String getSchemaName() {
         return schemaName;
     }
@@ -502,7 +505,9 @@ public class JobExecutor {
      * @return задание
      */
     public Job getJobById(@NonNull Long jobId){
-        return jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
+        Job job =  jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
+        job.setJobExecutor(self);
+        return job;
     }
 
     /**
