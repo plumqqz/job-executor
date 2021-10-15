@@ -350,7 +350,7 @@ public class Job {
         jobExecutor.stopJob(getId());
     }
 
-    public void run(){
+    public void resume(){
         jobExecutor.runJob(getId());
     }
 }
