@@ -267,9 +267,7 @@ public class JobExecutor {
     @SneakyThrows
     public void shutdown(){
         stopProcessing = true;
-        while(activeWorkers.get()>0){
-            Thread.sleep(100);
-        }
+        executorService.shutdown();
     }
 
     private void doWork() {
@@ -452,7 +450,7 @@ public class JobExecutor {
      */
     public<T> Optional<T> getOptionalReturnValue(Long jobId, Class<T> clazz){
         try {
-            final String content = jt.queryForObject("select return_value::text from tsy.job where job.id=?", String.class, jobId);
+            final String content = jt.queryForObject(expandSpelExpression("select return_value::text from #{schemaName}.job where job.id=?"), String.class, jobId);
             if(content==null){
                 return Optional.empty();
             }
@@ -495,7 +493,7 @@ public class JobExecutor {
      * @param dependsOnJobId задание, от которого оно будет зависеть
      */
     public void dependOn(long jobId, long dependsOnJobId){
-        jt.update("insert into tsy.job_depends_on(job_id,depends_on_job_id)values(?,?)", jobId, dependsOnJobId);
+        jt.update(expandSpelExpression("insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)"), jobId, dependsOnJobId);
     }
 
     /**
@@ -504,6 +502,6 @@ public class JobExecutor {
      * @return задание
      */
     public Job getJobById(@NonNull Long jobId){
-        return jt.query("select * from tsy.job where id=?", beanPropertyRowMapper, jobId).get(0);
+        return jt.query((expandSpelExpression()"select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
     }
 }
