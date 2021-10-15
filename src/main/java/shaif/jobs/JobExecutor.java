@@ -515,6 +515,6 @@ public class JobExecutor {
      * @return voi
      */
     public void restartJob(@NonNull Long jobId){
-        jt.update(expandSpelExpression("update #{schemaName}.job set is_failed=true where id=?"),jobId);
+        jt.update(expandSpelExpression("update #{schemaName}.job set is_failed=false where id=?"),jobId);
     }
 }
