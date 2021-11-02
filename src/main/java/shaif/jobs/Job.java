@@ -364,4 +364,7 @@ public class Job {
     public void resume(){
         jobExecutor.runJob(getId());
     }
+    public void delete(){
+        jobExecutor.deleteJob(getId());
+    }
 }
