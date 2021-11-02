@@ -234,6 +234,17 @@ public class Job {
     }
 
     /**
+     * Отправка задания на выполнение
+     * @param bean бин, реализующий задание
+     * @param parameters параметры задания
+     * @param dependsOn задания, от которых зависит текущее
+     * @return ссылка на процесс выполнения задания
+     */
+    public JobExecution submit(@NonNull JobHandler bean, @NonNull Object parameters, @NonNull List<Long> dependsOn){
+        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, Instant.now(), getId(), dependsOn, List.of(), false), getJobExecutor());
+    }
+
+    /**
      * Отправка задания на выполнение и ожидание его окончания. ЭТО НЕ БЛОКИРУЮЩИЙ МЕТОД, текушее задание
      * становится зависимым от добавляемого
      * @param bean класс бина. Этот бин должен существовать в ApplicationContext

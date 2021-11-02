@@ -52,7 +52,7 @@ create table tsy.job(
 );
 create table tsy.job_depends_on(
  job_id bigint not null references tsy.job(id),
- depends_on_job_id bigint not null references tsy.job(id) check(depends_on_job_id<>job_id),
+ depends_on_job_id bigint not null check(depends_on_job_id<>job_id),
  return_value jsonb
 );
 create unique index on tsy.job((md5(name||parameters::text)));
@@ -208,8 +208,8 @@ public class JobExecutor {
             "values(?,?::jsonb,jsonb_build_object(),false,false,to_timestamp(?),'started',?) " +
             "on conflict(md5(name||parameters::text)) do nothing " +
             "returning id";
-    private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)";
-    private String insertDependentOfQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)";
+    private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select ?, j.id from #{schemaName}.job j where j.id=?";
+    private String insertDependentOfQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select j.id,? from #{schemaName}.job j where j.id=?";
     private String getJobStateQry = "select *, is_done as done, is_failed as failed from #{schemaName}.job where id=?";
     protected String clearJobDependsOnQry = "delete from #{schemaName}.job_depends_on jdo\n" +
             " where not exists(select * from #{schemaName}.job j where jdo.job_id=j.id and (not j.is_done or j.is_failed))\n" +
@@ -259,7 +259,17 @@ public class JobExecutor {
                 log.error("Exception:{}", ex.getMessage(), ex);
             }
         }
-
+        for(BackgroundJobHandler jobHandler: applicationContext.getBeansOfType(BackgroundJobHandler.class).values()){
+            var newJobParameters = new BackgroundJobHandler.Parameters();
+            newJobParameters.setJobExecutorName("jobExecutor");
+            self.submit(jobHandler.getBeanName(),
+                    newJobParameters,
+                    Instant.now(),
+                    null,
+                    List.of(),
+                    List.of(),
+                    true);
+        }
     }
 
     private final BeanPropertyRowMapper<Job> beanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
@@ -318,7 +328,7 @@ public class JobExecutor {
                                         jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
                                         return true;
                                     }
-                                } catch (Exception ex) {
+                                } catch (Throwable ex) {
                                     log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
                                     try {
                                         ts.rollbackToSavepoint(svp);
@@ -429,7 +439,7 @@ public class JobExecutor {
                     jt.update(insertDependsOnQry, iid, jid);
                 }
                 for(Long jid: dependentOf){
-                    jt.update(insertDependentOfQry, jid, iid);
+                    jt.update(insertDependentOfQry, iid, jid);
                 }
             }else{
                 if(ignoreExistingJob) {
@@ -442,6 +452,38 @@ public class JobExecutor {
         });
     }
 
+    public Long submit(@NonNull JobHandler bean,
+                       @NonNull Object parameters,
+                       @NonNull Instant runAfter,
+                       Long parentJobId,
+                       @NonNull List<Long> dependsOn,
+                       @NonNull List<Long> dependentOf,
+                       boolean ignoreExistingJob){
+        return submit(bean.getBeanName(), parameters,runAfter, parentJobId, dependsOn, dependentOf, ignoreExistingJob);
+    }
+    public Long submit(@NonNull JobHandler bean,
+                       @NonNull Object parameters){
+        return submit(bean.getBeanName(), parameters,Instant.now(), null, List.of(), List.of(), true);
+    }
+    public Long submit(@NonNull JobHandler bean,
+                       @NonNull Object parameters,
+                       Long parentJobId
+                       ){
+        return submit(bean.getBeanName(), parameters,Instant.now(), parentJobId, List.of(), List.of(), true);
+    }
+    public Long submit(@NonNull JobHandler bean,
+                       @NonNull Object parameters,
+                       @NonNull List<Long> dependsOn
+                       ){
+        return submit(bean.getBeanName(), parameters,Instant.now(), null, dependsOn, List.of(), true);
+    }
+    public Long submit(@NonNull JobHandler bean,
+                       @NonNull Object parameters,
+                       Long parentJobId,
+                       @NonNull List<Long> dependsOn
+    ){
+        return submit(bean.getBeanName(), parameters,Instant.now(), parentJobId, dependsOn, List.of(), true);
+    }
     /**
      * Получение возвращаемого значения задания
      * @param jobId id задания
@@ -510,6 +552,10 @@ public class JobExecutor {
         return job;
     }
 
+    public List<Long> getJobIdsByName(@NonNull String jobName){
+        return jt.queryForList(expandSpelExpression("select j.id from #{schemaName}.job j where j.name=?"), Long.class, jobName);
+    }
+
     /**
      * restart failed job
      * @return voi
@@ -529,5 +575,8 @@ public class JobExecutor {
      */
     public void stopJob(@NonNull Long jobId){
         jt.update(expandSpelExpression("update #{schemaName}.job set next_run_after='infinity' where id=?"),jobId);
+    }
+    public void deleteJob(@NonNull Long jobId){
+        jt.update(expandSpelExpression("delete from #{schemaName}.job where id=?"),jobId);
     }
 }
