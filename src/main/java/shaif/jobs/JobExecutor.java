@@ -331,7 +331,7 @@ public class JobExecutor {
                                 } catch (Throwable ex) {
                                     log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
                                     try {
-                                        ts.rollbackToSavepoint(svp);
+                                        if(ts.hasSavepoint()) ts.rollbackToSavepoint(svp);
                                     } catch (TransactionException e) {
                                         log.error("Cannot rollback to savepount");
                                         throw new RuntimeException("Cannot rollback to savepoint", e);

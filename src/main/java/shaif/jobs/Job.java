@@ -106,7 +106,7 @@ public class Job {
             try {
                 return om.writeValueAsString(savedContext);
             } catch (JsonProcessingException e) {
-                throw new RuntimeException("Cannot serialize context object");
+                throw new RuntimeException("Cannot serialize context object:"+e.getMessage(),e);
             }
         }
         return context;
