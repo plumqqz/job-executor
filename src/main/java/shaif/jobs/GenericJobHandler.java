@@ -6,11 +6,10 @@ import java.lang.reflect.ParameterizedType;
 import java.util.List;
 
 @Data
-public class GenericJobHandler<P,C> implements JobHandler{
+public abstract class GenericJobHandler<P,C> implements JobHandler{
     String beanName;
-    public P p;
-    public C c;
-
+    Class<P> pClass = (Class<P>)((ParameterizedType)this.getClass().getGenericSuperclass()).getActualTypeArguments()[0];
+    Class<C> cClass = (Class<C>)((ParameterizedType)this.getClass().getGenericSuperclass()).getActualTypeArguments()[1];
     /**
      * Собственно обработчик
      *
@@ -19,12 +18,10 @@ public class GenericJobHandler<P,C> implements JobHandler{
      */
     @Override
     public JobState execute(Job job) {
-        P parameters = (P) job.getParameters((Class<P>)((ParameterizedType)this.getClass().getGenericSuperclass()).getActualTypeArguments()[0]);
-        C context = (C) job.getContext((Class<C>)((ParameterizedType)this.getClass().getGenericSuperclass()).getActualTypeArguments()[1]);
+        P parameters = (P) job.getParameters(pClass);
+        C context = (C) job.getContext(cClass);
         return execute(job, parameters, context);
     }
 
-     public JobState execute(Job job, P parameters, C context) {
-         throw new RuntimeException("Must be overriden");
-    }
+     public abstract JobState execute(Job job, P parameters, C context);
 }

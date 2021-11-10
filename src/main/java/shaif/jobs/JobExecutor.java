@@ -47,7 +47,7 @@ create table tsy.job(
  is_failed boolean not null default false,
  next_run_after timestamptz not null default now(),
  status_message text,
- parent_job_id bigint references tsy.job(id),
+ parent_job_id bigint,
  return_value jsonb
 );
 create table tsy.job_depends_on(
