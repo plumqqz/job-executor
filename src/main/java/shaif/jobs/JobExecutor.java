@@ -158,7 +158,7 @@ public class JobExecutor {
     TransactionTemplate transactionTemplate;
 
     @Autowired
-    PlatformTransactionManager transactonManager;
+    PlatformTransactionManager transactionManager;
 
     @Autowired
     DatabaseCleanerJob databaseCleanerJob;
@@ -294,22 +294,24 @@ public class JobExecutor {
                     activeWorkers.decrementAndGet();
                     return;
                 }
-                somethingFound = transactionTemplate.execute(transactionStatus ->
-                        {
+//                somethingFound = transactionTemplate.execute(transactionStatus ->
+//                        {
+                somethingFound = false;
+
                             for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
-                                TransactionStatus ts = transactonManager.getTransaction(transactionAttribute);
+                                TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                                 Object svp = ts.createSavepoint();
                                 jr.setJobExecutor(this);
                                 try {
                                     JobState result = applicationContext.getBean(jr.getName(), JobHandler.class).execute(jr);
                                     if (result.getStatus() == JobState.Status.ABORT) {
-                                        ts.rollbackToSavepoint(svp);
+                                        if(ts.hasSavepoint()) ts.rollbackToSavepoint(svp);
                                         log.error("ABORT job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
 
                                         jt.update(updateOnAbortQry, result.getMessage(), jr.getId());
-                                        return true;
+                                        somethingFound = true;
                                     } else if (result.getStatus() == JobState.Status.DONE) {
-                                        ts.releaseSavepoint(svp);
+                                        if(ts.hasSavepoint()) ts.releaseSavepoint(svp);
                                         log.info("DONE job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
 
                                         jt.update(updateOnDoneQry,
@@ -317,32 +319,29 @@ public class JobExecutor {
                                                 jr.getContext(),
                                                 result.getReturnValue() != null ? om.writeValueAsString(result.getReturnValue()) : null,
                                                 jr.getId());
-                                        return true;
+                                        somethingFound =true;
                                     } else if (result.getStatus() == JobState.Status.STOP) {
-                                        ts.releaseSavepoint(svp);
+                                        if(ts.hasSavepoint()) ts.releaseSavepoint(svp);
                                         log.info("STOP job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
                                         jt.update(updateOnStopQry, result.getMessage(), jr.getContext(), jr.getId());
                                     } else if (result.getStatus() == JobState.Status.CONTINUE) {
-                                        ts.releaseSavepoint(svp);
+                                        if(ts.hasSavepoint()) ts.releaseSavepoint(svp);
                                         log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
                                         jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
-                                        return true;
+                                        somethingFound = true;
                                     }
+                                    transactionManager.commit(ts);
                                 } catch (Throwable ex) {
                                     log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
-                                    try {
-                                        if(ts.hasSavepoint()) ts.rollbackToSavepoint(svp);
-                                    } catch (TransactionException e) {
-                                        log.error("Cannot rollback to savepount");
-                                        throw new RuntimeException("Cannot rollback to savepoint", e);
-                                    }
+                                    ts.rollbackToSavepoint(svp);
+                                    log.warn("Rollback to savepoint");
                                     jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
-                                    return true;
+                                    transactionManager.commit(ts);
+                                    somethingFound = true;
                                 }
                             }
-                            return false;
-                        }
-                );
+                        //}
+                //);
                 /*
                 Пытаемся минимизировать доступ к базе в случае отсутствия сообщений.
                 Если все воркеры простаивают, то к базе лезет только один и смотрит,
@@ -579,4 +578,14 @@ public class JobExecutor {
     public void deleteJob(@NonNull Long jobId){
         jt.update(expandSpelExpression("delete from #{schemaName}.job where id=?"),jobId);
     }
+
+    public void runAllJobs(JobHandler jh){
+        for(var jid: getJobIdsByName(jh.getBeanName()))
+            runJob(jid);
+    }
+    public void  stopAllJObs(JobHandler jh){
+        for (var jid: getJobIdsByName(jh.getBeanName()))
+            stopJob(jid);
+    }
+
 }
