@@ -294,54 +294,52 @@ public class JobExecutor {
                     activeWorkers.decrementAndGet();
                     return;
                 }
-//                somethingFound = transactionTemplate.execute(transactionStatus ->
-//                        {
                 somethingFound = false;
+                TransactionStatus tsMain = transactionManager.getTransaction(transactionAttribute);
+                for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
+                    TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
+                    Object svp = ts.createSavepoint();
+                    jr.setJobExecutor(this);
+                    try {
+                        JobState result = applicationContext.getBean(jr.getName(), JobHandler.class).execute(jr);
+                        if (result.getStatus() == JobState.Status.ABORT) {
+                            ts.rollbackToSavepoint(svp);
+                            log.error("ABORT job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
 
-                            for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
-                                TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
-                                Object svp = ts.createSavepoint();
-                                jr.setJobExecutor(this);
-                                try {
-                                    JobState result = applicationContext.getBean(jr.getName(), JobHandler.class).execute(jr);
-                                    if (result.getStatus() == JobState.Status.ABORT) {
-                                        if(ts.hasSavepoint()) ts.rollbackToSavepoint(svp);
-                                        log.error("ABORT job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
+                            jt.update(updateOnAbortQry, result.getMessage(), jr.getId());
+                            somethingFound = true;
+                        } else if (result.getStatus() == JobState.Status.DONE) {
+                            ts.releaseSavepoint(svp);
+                            log.info("DONE job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
 
-                                        jt.update(updateOnAbortQry, result.getMessage(), jr.getId());
-                                        somethingFound = true;
-                                    } else if (result.getStatus() == JobState.Status.DONE) {
-                                        if(ts.hasSavepoint()) ts.releaseSavepoint(svp);
-                                        log.info("DONE job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
+                            jt.update(updateOnDoneQry,
+                                    result.getMessage(),
+                                    jr.getContext(),
+                                    result.getReturnValue() != null ? om.writeValueAsString(result.getReturnValue()) : null,
+                                    jr.getId());
+                            somethingFound =true;
+                        } else if (result.getStatus() == JobState.Status.STOP) {
+                            ts.releaseSavepoint(svp);
+                            log.info("STOP job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
+                            jt.update(updateOnStopQry, result.getMessage(), jr.getContext(), jr.getId());
+                        } else if (result.getStatus() == JobState.Status.CONTINUE) {
+                            ts.releaseSavepoint(svp);
+                            log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
+                            jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
+                            somethingFound = true;
+                        }
+                        transactionManager.commit(ts);
+                    } catch (Throwable ex) {
+                        log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
+                        ts.rollbackToSavepoint(svp);
+                        log.warn("Rollback to savepoint");
+                        jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
+                        transactionManager.commit(ts);
+                        somethingFound = true;
+                    }
+                }
+                transactionManager.commit(tsMain);
 
-                                        jt.update(updateOnDoneQry,
-                                                result.getMessage(),
-                                                jr.getContext(),
-                                                result.getReturnValue() != null ? om.writeValueAsString(result.getReturnValue()) : null,
-                                                jr.getId());
-                                        somethingFound =true;
-                                    } else if (result.getStatus() == JobState.Status.STOP) {
-                                        if(ts.hasSavepoint()) ts.releaseSavepoint(svp);
-                                        log.info("STOP job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
-                                        jt.update(updateOnStopQry, result.getMessage(), jr.getContext(), jr.getId());
-                                    } else if (result.getStatus() == JobState.Status.CONTINUE) {
-                                        if(ts.hasSavepoint()) ts.releaseSavepoint(svp);
-                                        log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
-                                        jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
-                                        somethingFound = true;
-                                    }
-                                    transactionManager.commit(ts);
-                                } catch (Throwable ex) {
-                                    log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
-                                    ts.rollbackToSavepoint(svp);
-                                    log.warn("Rollback to savepoint");
-                                    jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
-                                    transactionManager.commit(ts);
-                                    somethingFound = true;
-                                }
-                            }
-                        //}
-                //);
                 /*
                 Пытаемся минимизировать доступ к базе в случае отсутствия сообщений.
                 Если все воркеры простаивают, то к базе лезет только один и смотрит,
