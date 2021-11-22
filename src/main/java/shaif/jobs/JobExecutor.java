@@ -17,6 +17,7 @@ import org.springframework.expression.common.TemplateParserContext;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.jdbc.core.BeanPropertyRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionException;
@@ -26,6 +27,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.PostConstruct;
 import java.io.IOException;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -165,9 +168,32 @@ public class JobExecutor {
 
     @Autowired
     JobExecutor self;
+    private String createTablesScript="create table #{schemaName}.job(\n" +
+            " id bigint generated always as identity primary key,\n" +
+            " name text not null,\n" +
+            " parameters jsonb not null,\n" +
+            " context jsonb not null,\n" +
+            " is_done boolean not null default false,\n" +
+            " is_failed boolean not null default false,\n" +
+            " next_run_after timestamptz not null default now(),\n" +
+            " status_message text,\n" +
+            " parent_job_id bigint,\n" +
+            " return_value jsonb\n" +
+            ");\n" +
+            "create table #{schemaName}.job_depends_on(\n" +
+            " job_id bigint not null references #{schemaName}.job(id) on delete cascade,\n" +
+            " depends_on_job_id bigint not null check(depends_on_job_id<>job_id),\n" +
+            " return_value jsonb\n" +
+            ");\n" +
+            "create unique index on #{schemaName}.job((md5(name||parameters::text)));\n";
+
 
     public String getSchemaName() {
         return schemaName;
+    }
+
+    public void setSchemaName(String schemaName) {
+        this.schemaName = schemaName;
     }
 
     @Value("${job-executor.schema-name:tsy}")
@@ -217,7 +243,7 @@ public class JobExecutor {
     protected String clearJobQry = "delete from #{schemaName}.job j\n" +
             " where not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.job_id)\n" +
             "   and not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.depends_on_job_id)" +
-            " and (j.is_done and not j.is_failed) and j.next_run_after<now()-make_interval(mins:=10)";
+            " and (j.is_done and not j.is_failed) and j.next_run_after<now()-make_interval(mins:=120)";
 
     static {
         om.registerModule(new JavaTimeModule());
@@ -235,8 +261,20 @@ public class JobExecutor {
     @Value("${job-executor.workers:10}")
     int workersCount;
 
+    private void createTables(){
+        if(jt.queryForObject(expandSpelExpression("select 2=(\n" +
+                "  select count(*) from information_schema.tables t where t.table_schema='#{schemaName}'\n" +
+                "  and table_name in('job','job_depends_on')\n" +
+                ")"),Boolean.class)){
+            log.info("Required tables were found in %s schema");
+            return;
+        }
+        jt.execute(expandSpelExpression(createTablesScript));
+    }
+
     @PostConstruct
     private void init(){
+        createTables();
         log.info("Starting with worker number={}", workersCount);
         selectRowToProcessQry = expandSpelExpression(selectRowToProcessQry);
         updateOnAbortQry = expandSpelExpression(updateOnAbortQry);
@@ -302,6 +340,9 @@ public class JobExecutor {
                     jr.setJobExecutor(this);
                     try {
                         JobState result = applicationContext.getBean(jr.getName(), JobHandler.class).execute(jr);
+                        if (result == null) {
+                            result = JobState.DONE("Done");
+                        }
                         if (result.getStatus() == JobState.Status.ABORT) {
                             ts.rollbackToSavepoint(svp);
                             log.error("ABORT job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
@@ -544,7 +585,23 @@ public class JobExecutor {
      * @return задание
      */
     public Job getJobById(@NonNull Long jobId){
-        Job job =  jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"), beanPropertyRowMapper, jobId).get(0);
+        Job job =  jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"),
+                new RowMapper<Job>() {
+                    @Override
+                    public Job mapRow(ResultSet rs, int rowNum) throws SQLException {
+                        var rv = new Job();
+                        rv.setFailed(rs.getBoolean("is_failed"));
+                        rv.setDone(rs.getBoolean("is_done"));
+                        rv.setContext(rs.getString("context"));
+                        rv.setParameters(rs.getString("parameters"));
+                        rv.setStatusMessage(rs.getString("status_message"));
+                        rv.setId(rs.getLong("id"));
+                        rv.setName(rs.getString("name"));
+                        rv.setParentJobId(rs.getLong("parent_job_id"));
+                        rv.setNextRunAfter(((java.sql.Timestamp)rs.getObject("next_run_after")).toInstant());
+                        return rv;
+                    }
+                }, jobId).get(0);
         job.setJobExecutor(self);
         return job;
     }
