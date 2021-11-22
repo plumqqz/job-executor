@@ -586,21 +586,18 @@ public class JobExecutor {
      */
     public Job getJobById(@NonNull Long jobId){
         Job job =  jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"),
-                new RowMapper<Job>() {
-                    @Override
-                    public Job mapRow(ResultSet rs, int rowNum) throws SQLException {
-                        var rv = new Job();
-                        rv.setFailed(rs.getBoolean("is_failed"));
-                        rv.setDone(rs.getBoolean("is_done"));
-                        rv.setContext(rs.getString("context"));
-                        rv.setParameters(rs.getString("parameters"));
-                        rv.setStatusMessage(rs.getString("status_message"));
-                        rv.setId(rs.getLong("id"));
-                        rv.setName(rs.getString("name"));
-                        rv.setParentJobId(rs.getLong("parent_job_id"));
-                        rv.setNextRunAfter(((java.sql.Timestamp)rs.getObject("next_run_after")).toInstant());
-                        return rv;
-                    }
+                (rs, rowNum) -> {
+                    var rv = new Job();
+                    rv.setFailed(rs.getBoolean("is_failed"));
+                    rv.setDone(rs.getBoolean("is_done"));
+                    rv.setContext(rs.getString("context"));
+                    rv.setParameters(rs.getString("parameters"));
+                    rv.setStatusMessage(rs.getString("status_message"));
+                    rv.setId(rs.getLong("id"));
+                    rv.setName(rs.getString("name"));
+                    rv.setParentJobId(rs.getLong("parent_job_id"));
+                    rv.setNextRunAfter(((java.sql.Timestamp)rs.getObject("next_run_after")).toInstant());
+                    return rv;
                 }, jobId).get(0);
         job.setJobExecutor(self);
         return job;
