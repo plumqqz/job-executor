@@ -169,24 +169,6 @@ public class JobExecutor {
 
     @Autowired
     JobExecutor self;
-    private String createTablesScript="create table #{schemaName}.job(\n" +
-            " id bigint generated always as identity primary key,\n" +
-            " name text not null,\n" +
-            " parameters jsonb not null,\n" +
-            " context jsonb not null,\n" +
-            " is_done boolean not null default false,\n" +
-            " is_failed boolean not null default false,\n" +
-            " next_run_after timestamptz not null default now(),\n" +
-            " status_message text,\n" +
-            " parent_job_id bigint,\n" +
-            " return_value jsonb\n" +
-            ");\n" +
-            "create table #{schemaName}.job_depends_on(\n" +
-            " job_id bigint not null references #{schemaName}.job(id) on delete cascade,\n" +
-            " depends_on_job_id bigint not null check(depends_on_job_id<>job_id),\n" +
-            " return_value jsonb\n" +
-            ");\n" +
-            "create unique index on #{schemaName}.job((md5(name||parameters::text)));\n";
 
 
     public String getSchemaName() {
@@ -217,7 +199,7 @@ public class JobExecutor {
 
     ExecutorService executorService;
 
-    static ObjectMapper om = new ObjectMapper();
+    static final ObjectMapper om = new ObjectMapper();
     private String selectRowToProcessQry = "select " +
             " * " +
             " from #{schemaName}.job where not job.is_done and not job.is_failed " +
@@ -270,6 +252,24 @@ public class JobExecutor {
             log.info("Required tables were found in %s schema");
             return;
         }
+        String createTablesScript = "create table #{schemaName}.job(\n" +
+                " id bigint generated always as identity primary key,\n" +
+                " name text not null,\n" +
+                " parameters jsonb not null,\n" +
+                " context jsonb not null,\n" +
+                " is_done boolean not null default false,\n" +
+                " is_failed boolean not null default false,\n" +
+                " next_run_after timestamptz not null default now(),\n" +
+                " status_message text,\n" +
+                " parent_job_id bigint,\n" +
+                " return_value jsonb\n" +
+                ");\n" +
+                "create table #{schemaName}.job_depends_on(\n" +
+                " job_id bigint not null references #{schemaName}.job(id) on delete cascade,\n" +
+                " depends_on_job_id bigint not null check(depends_on_job_id<>job_id),\n" +
+                " return_value jsonb\n" +
+                ");\n" +
+                "create unique index on #{schemaName}.job((md5(name||parameters::text)));\n";
         jt.execute(expandSpelExpression(createTablesScript));
     }
 
@@ -314,7 +314,7 @@ public class JobExecutor {
     private final BeanPropertyRowMapper<Job> beanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
     private final DefaultTransactionAttribute transactionAttribute = new DefaultTransactionAttribute();
     private volatile boolean stopProcessing = false;
-    private AtomicInteger activeWorkers = new AtomicInteger(0);
+    private final AtomicInteger activeWorkers = new AtomicInteger(0);
 
     @SneakyThrows
     public void shutdown(){

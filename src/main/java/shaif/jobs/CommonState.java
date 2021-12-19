@@ -7,6 +7,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 @UtilityClass
 public class CommonState {
-    static AtomicInteger activeCount = new AtomicInteger(0);
-    static AtomicLong workerThreadId = new AtomicLong(-1);
+    static final AtomicInteger activeCount = new AtomicInteger(0);
+    static final AtomicLong workerThreadId = new AtomicLong(-1);
 }
