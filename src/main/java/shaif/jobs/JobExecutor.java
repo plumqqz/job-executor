@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.dao.support.DataAccessUtils;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.ParserContext;
 import org.springframework.expression.common.TemplateParserContext;
@@ -585,7 +586,7 @@ public class JobExecutor {
      * @return задание
      */
     public Job getJobById(@NonNull Long jobId){
-        Job job =  jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"),
+        Job job = DataAccessUtils.singleResult(jt.query(expandSpelExpression("select * from #{schemaName}.job where id=?"),
                 (rs, rowNum) -> {
                     var rv = new Job();
                     rv.setFailed(rs.getBoolean("is_failed"));
@@ -598,7 +599,8 @@ public class JobExecutor {
                     rv.setParentJobId(rs.getLong("parent_job_id"));
                     rv.setNextRunAfter(((java.sql.Timestamp)rs.getObject("next_run_after")).toInstant());
                     return rv;
-                }, jobId).get(0);
+                }, jobId));
+        if(null==job) return null;
         job.setJobExecutor(self);
         return job;
     }
