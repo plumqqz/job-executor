@@ -261,7 +261,7 @@ public class JobExecutor {
                 " is_failed boolean not null default false,\n" +
                 " next_run_after timestamptz not null default now(),\n" +
                 " status_message text,\n" +
-                " parent_job_id bigint,\n" +
+                " parent_job_id bigint refernces #{schemaName}.job(job_id) on delete set null,\n" +
                 " return_value jsonb\n" +
                 ");\n" +
                 "create table #{schemaName}.job_depends_on(\n" +
