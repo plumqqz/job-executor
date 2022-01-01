@@ -353,6 +353,30 @@ public class Job {
         getJobExecutor().dependOn(depender.getJobId(), getId());
     }
 
+    /**
+     * Удаляет зависимость указанного задания от данного
+     * @param depender - задание, для которого необходимо удалить зависимость от заданного
+     */
+    public void makeJobIndependent(JobExecution depender){
+        getJobExecutor().independOn(depender.getJobId(), getId());
+    }
+
+    /**
+     * Делает данное задание зависимым от указанного задания
+     * @param dependsOn - задание, от которого должно зависеть данное задание
+     */
+    public void makeSelfDependent(JobExecution dependsOn){
+        getJobExecutor().dependOn(getId(), dependsOn.getJobId());
+    }
+
+    /**
+     * Удаляет зависимость данного задания от указанного
+     * @param dependsOn задание, зависиость от которого надо удалить
+     */
+    public void makeSelfIndependent(JobExecution dependsOn){
+        getJobExecutor().independOn(getId(), dependsOn.getJobId());
+    }
+
     public void restart(){
         jobExecutor.restartJob(getId());
     }
@@ -367,4 +391,13 @@ public class Job {
     public void delete(){
         jobExecutor.deleteJob(getId());
     }
+
+    public List<JobExecution> listDependentJobs(){
+        return jobExecutor.listDependentJobs(id);
+    }
+
+    public List<JobExecution> listDependsOnJobs(){
+        return jobExecutor.listDependsOnJobs(id);
+    }
+
 }

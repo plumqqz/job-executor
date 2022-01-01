@@ -38,6 +38,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /*
 
@@ -382,6 +383,8 @@ public class JobExecutor {
                 }
                 transactionManager.commit(tsMain);
 
+                if(somethingFound) continue;
+
                 /*
                 Пытаемся минимизировать доступ к базе в случае отсутствия сообщений.
                 Если все воркеры простаивают, то к базе лезет только один и смотрит,
@@ -580,6 +583,10 @@ public class JobExecutor {
         jt.update(expandSpelExpression("insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)"), jobId, dependsOnJobId);
     }
 
+    public void independOn(long jobId, long dependsOnJobId){
+        jt.update(expandSpelExpression("delete from #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)"), jobId, dependsOnJobId);
+    }
+
     /**
      * Получение задания по его id
      * @param jobId id задания
@@ -640,6 +647,24 @@ public class JobExecutor {
     public void  stopAllJObs(JobHandler jh){
         for (var jid: getJobIdsByName(jh.getBeanName()))
             stopJob(jid);
+    }
+
+    public List<JobExecution> listDependentJobs(@NonNull Long jobId){
+        return jt.queryForList(expandSpelExpression("select jdo.depends_on_job_id from #{schemaName}.job_depends_on jdo where jdo.job_id=?"),Long.class, jobId)
+                .stream()
+                .map(v-> getJobExecution(v))
+                .collect(Collectors.toList());
+    }
+
+    public List<JobExecution> listDependsOnJobs(@NonNull Long jobId){
+        return jt.queryForList(expandSpelExpression("select jdo.job_id from #{schemaName}.job_depends_on jdo where jdo.depends_on_job_id=?"),Long.class, jobId)
+                .stream()
+                .map(v-> getJobExecution(v))
+                .collect(Collectors.toList());
+    }
+
+    public JobExecution getJobExecution(@NonNull Long jobId){
+        return new JobExecution(jobId, this);
     }
 
 }

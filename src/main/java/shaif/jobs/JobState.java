@@ -102,6 +102,7 @@ public class JobState {
         var rv = new JobState();
         rv.status = CONTINUE;
         rv.message = message;
+        rv.nextRun=Instant.now();
         return rv;
     }
 
