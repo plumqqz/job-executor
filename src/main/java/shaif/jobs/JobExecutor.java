@@ -584,7 +584,7 @@ public class JobExecutor {
     }
 
     public void independOn(long jobId, long dependsOnJobId){
-        jt.update(expandSpelExpression("delete from #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)"), jobId, dependsOnJobId);
+        jt.update(expandSpelExpression("delete from #{schemaName}.job_depends_on jdo where (jdo.job_id,jdo.depends_on_job_id)=(?,?)"), jobId, dependsOnJobId);
     }
 
     /**
@@ -650,14 +650,14 @@ public class JobExecutor {
     }
 
     public List<JobExecution> listDependentJobs(@NonNull Long jobId){
-        return jt.queryForList(expandSpelExpression("select jdo.depends_on_job_id from #{schemaName}.job_depends_on jdo where jdo.job_id=?"),Long.class, jobId)
+        return jt.queryForList(expandSpelExpression("select jdo.job_id from #{schemaName}.job_depends_on jdo where jdo.depends_on_job_id=?"),Long.class, jobId)
                 .stream()
                 .map(v-> getJobExecution(v))
                 .collect(Collectors.toList());
     }
 
     public List<JobExecution> listDependsOnJobs(@NonNull Long jobId){
-        return jt.queryForList(expandSpelExpression("select jdo.job_id from #{schemaName}.job_depends_on jdo where jdo.depends_on_job_id=?"),Long.class, jobId)
+        return jt.queryForList(expandSpelExpression("select jdo.depends_on_job_id from #{schemaName}.job_depends_on jdo where jdo.job_id=?"),Long.class, jobId)
                 .stream()
                 .map(v-> getJobExecution(v))
                 .collect(Collectors.toList());
