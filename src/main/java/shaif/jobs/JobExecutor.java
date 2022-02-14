@@ -300,16 +300,20 @@ public class JobExecutor {
             }
         }
         for(BackgroundJobHandler jobHandler: applicationContext.getBeansOfType(BackgroundJobHandler.class).values()){
-            var newJobParameters = new BackgroundJobHandler.Parameters();
-            newJobParameters.setJobExecutorName("jobExecutor");
-            self.submit(jobHandler.getBeanName(),
-                    newJobParameters,
-                    Instant.now(),
-                    null,
-                    List.of(),
-                    List.of(),
-                    true);
+            submitBackgroudJob(jobHandler);
         }
+    }
+
+    private void submitBackgroudJob(BackgroundJobHandler jobHandler) {
+        var newJobParameters = new BackgroundJobHandler.Parameters();
+        newJobParameters.setJobExecutorName("jobExecutor");
+        self.submit(jobHandler.getBeanName(),
+                newJobParameters,
+                Instant.now(),
+                null,
+                List.of(),
+                List.of(),
+                true);
     }
 
     private final BeanPropertyRowMapper<Job> beanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
@@ -341,9 +345,13 @@ public class JobExecutor {
                     Object svp = ts.createSavepoint();
                     jr.setJobExecutor(this);
                     try {
-                        JobState result = applicationContext.getBean(jr.getName(), JobHandler.class).execute(jr);
+                        final JobHandler executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
+                        JobState result = executionBean.execute(jr);
                         if (result == null) {
                             result = JobState.DONE("Done");
+                        }
+                        if(executionBean instanceof BackgroundJobHandler && result.getStatus() == JobState.Status.DONE){
+                            this.submitBackgroudJob((BackgroundJobHandler) executionBean);
                         }
                         if (result.getStatus() == JobState.Status.ABORT) {
                             ts.rollbackToSavepoint(svp);
