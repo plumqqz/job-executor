@@ -30,14 +30,20 @@ import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
 /*
@@ -321,6 +327,8 @@ public class JobExecutor {
     private volatile boolean stopProcessing = false;
     private final AtomicInteger activeWorkers = new AtomicInteger(0);
 
+    AtomicReference<Instant> lastDbCheck = new AtomicReference<>(Instant.now());
+
     @SneakyThrows
     public void shutdown(){
         stopProcessing = true;
@@ -338,8 +346,15 @@ public class JobExecutor {
                     activeWorkers.decrementAndGet();
                     return;
                 }
+
+                if (Duration.between(lastDbCheck.get(), Instant.now()).get(ChronoUnit.MILLIS) < 500) {
+                    Thread.sleep(500);
+                    continue;
+                }
+
                 somethingFound = false;
                 TransactionStatus tsMain = transactionManager.getTransaction(transactionAttribute);
+                var checkInstant = Instant.now();
                 for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
                     TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                     Object svp = ts.createSavepoint();
@@ -392,6 +407,11 @@ public class JobExecutor {
                 transactionManager.commit(tsMain);
 
                 if(somethingFound) continue;
+
+                lastDbCheck.accumulateAndGet(checkInstant, (oldValue, newValue)->{
+                   if(oldValue.isAfter(newValue)) return oldValue;
+                   return newValue;
+                });
 
                 /*
                 Пытаемся минимизировать доступ к базе в случае отсутствия сообщений.

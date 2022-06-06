@@ -119,7 +119,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submit(@NonNull String beanName, @NonNull Object parameters){
-        return new JobExecution(getJobExecutor().submit(beanName, parameters, Instant.now(), getId(), List.of(), List.of(), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(beanName, parameters, Instant.now(), getId(), List.of(), List.of(), true), getJobExecutor());
     }
 
     /**
@@ -130,7 +130,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submit(@NonNull String beanName, @NonNull Object parameters, @NonNull Instant runAfter){
-        return new JobExecution(getJobExecutor().submit(beanName, parameters, runAfter, getId(), List.of(), List.of(), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(beanName, parameters, runAfter, getId(), List.of(), List.of(), true), getJobExecutor());
     }
 
     /**
@@ -141,7 +141,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submitAndWait(@NonNull String beanName, @NonNull Object parameters){
-        return new JobExecution(getJobExecutor().submit(beanName, parameters, Instant.now(), getId(), List.of(), List.of(getId()), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(beanName, parameters, Instant.now(), getId(), List.of(), List.of(getId()), true), getJobExecutor());
     }
 
     /**
@@ -153,7 +153,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submitAndWait(@NonNull  String beanName, @NonNull Object parameters, @NonNull Instant runAfter){
-        return new JobExecution(getJobExecutor().submit(beanName, parameters, runAfter, getId(), List.of(), List.of(getId()), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(beanName, parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
     }
 
     /**
@@ -175,7 +175,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submit(@NonNull Class<? extends JobHandler> beanClass, @NonNull Object parameters, @NonNull Instant runAfter){
-        return new JobExecution(getJobExecutor().submit(getOnlyBeanNameOfType(beanClass), parameters, runAfter, getId(), List.of(), List.of(getId()), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(getOnlyBeanNameOfType(beanClass), parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
     }
 
     /**
@@ -197,7 +197,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submitAndWait(@NonNull Class<? extends JobHandler> beanClass, @NonNull Object parameters, @NonNull Instant runAfter){
-        return new JobExecution(getJobExecutor().submit(getOnlyBeanNameOfType(beanClass), parameters, runAfter, getId(), List.of(), List.of(getId()), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(getOnlyBeanNameOfType(beanClass), parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
     }
 
     private String getOnlyBeanNameOfType(@NonNull Class<? extends JobHandler> beanClass) {
@@ -230,7 +230,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submit(@NonNull JobHandler bean, @NonNull Object parameters, @NonNull Instant runAfter){
-        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, runAfter, getId(), List.of(), List.of(), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, runAfter, getId(), List.of(), List.of(), true), getJobExecutor());
     }
 
     /**
@@ -241,7 +241,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submit(@NonNull JobHandler bean, @NonNull Object parameters, @NonNull List<Long> dependsOn){
-        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, Instant.now(), getId(), dependsOn, List.of(), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, Instant.now(), getId(), dependsOn, List.of(), true), getJobExecutor());
     }
 
     /**
@@ -263,7 +263,7 @@ public class Job {
      * @return ссылка на процесс выполнения задания
      */
     public JobExecution submitAndWait(@NonNull JobHandler bean, Object parameters, @NonNull Instant runAfter){
-        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, runAfter, getId(), List.of(), List.of(getId()), false), getJobExecutor());
+        return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
     }
 
     /**
