@@ -347,7 +347,7 @@ public class JobExecutor {
                     return;
                 }
 
-                if (Duration.between(lastDbCheck.get(), Instant.now()).get(ChronoUnit.MILLIS) < 500) {
+                if (Duration.between(lastDbCheck.get(), Instant.now()).get(ChronoUnit.NANOS) < 500000000L) {
                     Thread.sleep(500);
                     continue;
                 }
