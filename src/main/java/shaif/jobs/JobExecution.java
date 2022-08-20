@@ -26,7 +26,7 @@ public class JobExecution {
         return jobExecutor.getOptionalReturnValue(jobId, clazz);
     }
 
-    protected JobExecution(long jobId, JobExecutor jobExecutor){
+    protected JobExecution(Long jobId, JobExecutor jobExecutor){
         this.jobId=jobId;
         this.jobExecutor =jobExecutor;
     }

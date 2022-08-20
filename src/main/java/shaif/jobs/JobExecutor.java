@@ -180,7 +180,6 @@ public class JobExecutor {
     @Lazy
     JobExecutor self;
 
-
     public String getSchemaName() {
         return schemaName;
     }
@@ -262,7 +261,7 @@ public class JobExecutor {
                 "  select count(*) from information_schema.tables t where t.table_schema='#{schemaName}'\n" +
                 "  and table_name in('job','job_depends_on')\n" +
                 ")"),Boolean.class)){
-            log.info("Required tables were found in %s schema");
+            log.info("Required tables were found in %s schema", getSchemaName());
             return;
         }
         String createTablesScript = "create table #{schemaName}.job(\n" +
@@ -319,7 +318,7 @@ public class JobExecutor {
     private void submitBackgroudJob(BackgroundJobHandler jobHandler) {
         var newJobParameters = new BackgroundJobHandler.Parameters();
         newJobParameters.setJobExecutorName("jobExecutor");
-        self.submit(jobHandler.getBeanName(),
+        submit(jobHandler.getBeanName(),
                 newJobParameters,
                 Instant.now(),
                 null,

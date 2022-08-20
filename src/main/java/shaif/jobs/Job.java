@@ -7,7 +7,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer;
 import lombok.Data;
+import lombok.Getter;
 import lombok.NonNull;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -18,7 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-@Data
+@Getter
+@Setter
 @Slf4j
 public class Job {
     static ObjectMapper om = new ObjectMapper();
@@ -45,12 +48,8 @@ public class Job {
 
     private Object savedContext;
 
-    public JobExecutor getJobExecutor() {
-        return jobExecutor;
-    }
-
     InjectableValues ivs = null;
-    protected void setJobExecutor(JobExecutor jobExecutor){
+    protected void setJobExecutor(@NonNull JobExecutor jobExecutor){
         this.jobExecutor = jobExecutor;
         ivs = new InjectableValues.Std().addValue(JobExecutor.class, jobExecutor);
     }
