@@ -21,12 +21,13 @@ public class DatabaseCleanerJob implements JobHandler{
     JdbcTemplate jdbcTemplate;
 
     @Autowired
+    @Lazy
     JobExecutor jobExecutor;
 
     @Override
     public JobState execute(Job job) {
-        jdbcTemplate.update(jobExecutor.clearJobDependsOnQry);
-        jdbcTemplate.update(jobExecutor.clearJobQry);
+        jdbcTemplate.update(jobExecutor.getClearJobDependsOnQry());
+        jdbcTemplate.update(jobExecutor.getClearJobQry());
         return JobState.CONTINUE("Cleanup done at " + Instant.now().toString(), Duration.ofMinutes(15));
     }
 

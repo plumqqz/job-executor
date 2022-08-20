@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.support.DataAccessUtils;
 import org.springframework.expression.ExpressionParser;
@@ -158,6 +159,7 @@ from tq order by path
 
 @Slf4j
 @Service
+@Data
 public class JobExecutor {
     @Autowired
     JdbcTemplate jt;
@@ -175,6 +177,7 @@ public class JobExecutor {
     DatabaseCleanerJob databaseCleanerJob;
 
     @Autowired
+    @Lazy
     JobExecutor self;
 
 
@@ -198,7 +201,10 @@ public class JobExecutor {
     private ParserContext parserContext = new TemplateParserContext();
 
     public String expandSpelExpression(String querySource) {
-        return spelExpressionParser.parseExpression(querySource, parserContext).getValue(this, String.class);
+        log.debug("Query:{}", querySource);
+        var rv= spelExpressionParser.parseExpression(querySource, parserContext).getValue(this, String.class);
+        log.debug("Processed query:{}", rv);
+        return rv;
     }
 
     @Value("${job-executor.threads:10}")
@@ -268,7 +274,7 @@ public class JobExecutor {
                 " is_failed boolean not null default false,\n" +
                 " next_run_after timestamptz not null default now(),\n" +
                 " status_message text,\n" +
-                " parent_job_id bigint refernces #{schemaName}.job(job_id) on delete set null,\n" +
+                " parent_job_id bigint references #{schemaName}.job(id) on delete set null,\n" +
                 " return_value jsonb\n" +
                 ");\n" +
                 "create table #{schemaName}.job_depends_on(\n" +
