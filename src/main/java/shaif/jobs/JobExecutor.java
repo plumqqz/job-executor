@@ -162,41 +162,41 @@ from tq order by path
 @Data
 public class JobExecutor {
     @Autowired
+    @ToString.Exclude
     JdbcTemplate jt;
 
     @Autowired
+    @ToString.Exclude
     ApplicationContext applicationContext;
 
     @Autowired
+    @ToString.Exclude
     TransactionTemplate transactionTemplate;
 
     @Autowired
+    @ToString.Exclude
     PlatformTransactionManager transactionManager;
 
     @Autowired
+    @ToString.Exclude
     DatabaseCleanerJob databaseCleanerJob;
 
     @Autowired
     @Lazy
+    @ToString.Exclude
     JobExecutor self;
-
-    public String getSchemaName() {
-        return schemaName;
-    }
-
-    public void setSchemaName(String schemaName) {
-        this.schemaName = schemaName;
-    }
 
     @Value("${job-executor.schema-name:tsy}")
     String schemaName;
 
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
+    @ToString.Exclude
     private ExpressionParser spelExpressionParser = new SpelExpressionParser();
 
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
+    @ToString.Exclude
     private ParserContext parserContext = new TemplateParserContext();
 
     public String expandSpelExpression(String querySource) {
@@ -209,8 +209,10 @@ public class JobExecutor {
     @Value("${job-executor.threads:10}")
     int threadsCount;
 
+    @ToString.Exclude
     ExecutorService executorService;
 
+    @ToString.Exclude
     static final ObjectMapper om = new ObjectMapper();
     private String selectRowToProcessQry = "select " +
             " * " +
@@ -220,21 +222,32 @@ public class JobExecutor {
             " for update skip locked" +
             " limit 1";
 
+    @ToString.Exclude
     private String updateOnAbortQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
+    @ToString.Exclude
     private String updateOnDoneQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, is_done=true, return_value=?::jsonb where id=?";
+    @ToString.Exclude
     private String updateOnStopQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, is_failed=true where id=?";
+    @ToString.Exclude
     private String updateOnContinueQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, next_run_after=coalesce(to_timestamp(?),next_run_after) where id=?";
+    @ToString.Exclude
     private String updateOnExceptionQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
+    @ToString.Exclude
     private String insertOnSubmitQry = "insert into #{schemaName}.job(name, parameters,context,is_done,is_failed, next_run_after, status_message, parent_job_id)" +
             "values(?,?::jsonb,jsonb_build_object(),false,false,to_timestamp(?),'started',?) " +
             "on conflict(md5(name||parameters::text)) do nothing " +
             "returning id";
+    @ToString.Exclude
     private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select ?, j.id from #{schemaName}.job j where j.id=?";
+    @ToString.Exclude
     private String insertDependentOfQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select j.id,? from #{schemaName}.job j where j.id=?";
+    @ToString.Exclude
     private String getJobStateQry = "select *, is_done as done, is_failed as failed from #{schemaName}.job where id=?";
+    @ToString.Exclude
     protected String clearJobDependsOnQry = "delete from #{schemaName}.job_depends_on jdo\n" +
             " where not exists(select * from #{schemaName}.job j where jdo.job_id=j.id and (not j.is_done or j.is_failed))\n" +
             "  and not exists(select * from #{schemaName}.job j where jdo.depends_on_job_id=j.id and (not j.is_done or j.is_failed))";
+    @ToString.Exclude
     protected String clearJobQry = "delete from #{schemaName}.job j\n" +
             " where not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.job_id)\n" +
             "   and not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.depends_on_job_id)" +
@@ -641,7 +654,7 @@ public class JobExecutor {
                     return rv;
                 }, jobId));
         if(null==job) return null;
-        job.setJobExecutor(self);
+        job.setJobExecutor(this.getSelf());
         return job;
     }
 

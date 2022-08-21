@@ -1,6 +1,7 @@
 package shaif.jobs;
 
 import lombok.Data;
+import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
@@ -20,13 +21,16 @@ public class DatabaseCleanerJob implements JobHandler{
     String beanName;
 
     @Autowired
+    @ToString.Exclude
     JdbcTemplate jdbcTemplate;
 
     @Autowired
     @Lazy
+    @ToString.Exclude
     JobExecutor jobExecutor;
 
     @Autowired
+    @ToString.Exclude
     ApplicationContext ctx;
 
     @Override

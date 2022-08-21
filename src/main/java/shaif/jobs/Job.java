@@ -6,10 +6,7 @@ import com.fasterxml.jackson.databind.InjectableValues;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer;
-import lombok.Data;
-import lombok.Getter;
-import lombok.NonNull;
-import lombok.Setter;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -44,10 +41,13 @@ public class Job {
     boolean isFailed;
     Long parentJobId;
 
+    @ToString.Exclude
     private JobExecutor jobExecutor;
 
+    @ToString.Exclude
     private Object savedContext;
 
+    @ToString.Exclude
     InjectableValues ivs = null;
     protected void setJobExecutor(@NonNull JobExecutor jobExecutor){
         this.jobExecutor = jobExecutor;

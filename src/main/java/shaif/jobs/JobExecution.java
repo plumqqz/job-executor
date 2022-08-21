@@ -2,6 +2,7 @@ package shaif.jobs;
 
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import lombok.ToString;
 
 import java.util.Optional;
 
@@ -13,6 +14,7 @@ public class JobExecution {
 
     @JsonIgnore
     @JacksonInject
+    @ToString.Exclude
     JobExecutor jobExecutor;
 
     /**
