@@ -7,6 +7,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.BeanNameAware;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
@@ -160,7 +161,7 @@ from tq order by path
 @Slf4j
 @Service
 @Data
-public class JobExecutor {
+public class JobExecutor implements BeanNameAware {
     @Autowired
     @ToString.Exclude
     JdbcTemplate jt;
@@ -181,10 +182,12 @@ public class JobExecutor {
     @ToString.Exclude
     DatabaseCleanerJob databaseCleanerJob;
 
-    @Autowired
-    @Lazy
-    @ToString.Exclude
-    JobExecutor self;
+    private JobExecutor self;
+    public JobExecutor getSelf(){
+        if(self!=null) return self;
+        self = applicationContext.getBean(getBeanName(), JobExecutor.class);
+        return self;
+    };
 
     @Value("${job-executor.schema-name:tsy}")
     String schemaName;
@@ -198,6 +201,7 @@ public class JobExecutor {
     @Setter(AccessLevel.NONE)
     @ToString.Exclude
     private ParserContext parserContext = new TemplateParserContext();
+    private String beanName;
 
     public String expandSpelExpression(String querySource) {
         log.debug("Query:{}", querySource);
@@ -274,7 +278,7 @@ public class JobExecutor {
                 "  select count(*) from information_schema.tables t where t.table_schema='#{schemaName}'\n" +
                 "  and table_name in('job','job_depends_on')\n" +
                 ")"),Boolean.class)){
-            log.info("Required tables were found in %s schema", getSchemaName());
+            log.info(String.format("Required tables were found in %s schema", getSchemaName()));
             return;
         }
         String createTablesScript = "create table #{schemaName}.job(\n" +
@@ -713,4 +717,8 @@ public class JobExecutor {
         return new JobExecution(jobId, this);
     }
 
+    @Override
+    public void setBeanName(String s) {
+        this.beanName = s;
+    }
 }
