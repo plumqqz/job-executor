@@ -376,7 +376,7 @@ public class JobExecutor {
                 for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
                     TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                     Object svp = ts.createSavepoint();
-                    jr.setJobExecutor(this);
+                    jr.setJobExecutor(this.getSelf());
                     try {
                         final JobHandler executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
                         JobState result = executionBean.execute(jr);
