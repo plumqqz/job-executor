@@ -378,6 +378,7 @@ public class JobExecutor implements BeanNameAware {
                 TransactionStatus tsMain = transactionManager.getTransaction(transactionAttribute);
                 var checkInstant = Instant.now();
                 for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
+                    somethingFound =true;
                     TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                     Object svp = ts.createSavepoint();
                     jr.setJobExecutor(this.getSelf());
@@ -387,15 +388,11 @@ public class JobExecutor implements BeanNameAware {
                         if (result == null) {
                             result = JobState.DONE("Done");
                         }
-                        if(executionBean instanceof BackgroundJobHandler && result.getStatus() == JobState.Status.DONE){
-                            this.submitBackgroudJob((BackgroundJobHandler) executionBean);
-                        }
                         if (result.getStatus() == JobState.Status.ABORT) {
                             ts.rollbackToSavepoint(svp);
                             log.error("ABORT job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
 
                             jt.update(updateOnAbortQry, result.getMessage(), jr.getId());
-                            somethingFound = true;
                         } else if (result.getStatus() == JobState.Status.DONE) {
                             ts.releaseSavepoint(svp);
                             log.info("DONE job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
@@ -405,7 +402,9 @@ public class JobExecutor implements BeanNameAware {
                                     jr.getContext(),
                                     result.getReturnValue() != null ? om.writeValueAsString(result.getReturnValue()) : null,
                                     jr.getId());
-                            somethingFound =true;
+                            if(executionBean instanceof BackgroundJobHandler){
+                                this.submitBackgroudJob((BackgroundJobHandler) executionBean);
+                            }
                         } else if (result.getStatus() == JobState.Status.STOP) {
                             ts.releaseSavepoint(svp);
                             log.info("STOP job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
@@ -414,7 +413,6 @@ public class JobExecutor implements BeanNameAware {
                             ts.releaseSavepoint(svp);
                             log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
                             jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
-                            somethingFound = true;
                         }
                         transactionManager.commit(ts);
                     } catch (Throwable ex) {
@@ -431,8 +429,8 @@ public class JobExecutor implements BeanNameAware {
                 if(somethingFound) continue;
 
                 lastDbCheck.accumulateAndGet(checkInstant, (oldValue, newValue)->{
-                   if(oldValue.isAfter(newValue)) return oldValue;
-                   return newValue;
+                    if(oldValue.isAfter(newValue)) return oldValue;
+                    return newValue;
                 });
 
                 /*
@@ -448,31 +446,20 @@ public class JobExecutor implements BeanNameAware {
                         }
                         final long myId = Thread.currentThread().getId();
 
-                        int activeCount = 0;
-                        if (prevSomethingFound && !somethingFound) {
-                            activeCount = CommonState.activeCount.decrementAndGet();
-                            incremented = false;
-                        } else if (!prevSomethingFound && somethingFound) {
-                            activeCount = CommonState.activeCount.incrementAndGet();
-                            incremented=true;
-                        }else{
-                            activeCount = CommonState.activeCount.get();
-                            incremented = false;
-                        }
-                        prevSomethingFound = somethingFound;
-
-
-                        if (!somethingFound && activeCount==0) {
-                            long workerThreadId = CommonState.workerThreadId.updateAndGet(l -> l == -1 ? myId : Math.min(l, myId));
-                            if (workerThreadId == myId) {
-                                //noinspection BusyWait
-                                Thread.sleep(500);
-                                break;
+                        //кто первый встал - того и тапки
+                        var workerThread = CommonState.workerThread.updateAndGet(t ->{
+                            if(t==null || !t.isAlive()){
+                                return Thread.currentThread();
                             }
-                            Thread.sleep(2000);
-                        } else {
+                            return t;
+                        });
+
+                        if (workerThread.getId() == myId) {
+                            //noinspection BusyWait
+                            Thread.sleep(500);
                             break;
                         }
+                        Thread.sleep(2000);
                     }
                 } catch (NullPointerException ex) {
                     log.error("Get unexpected null pointer exception");
@@ -484,12 +471,6 @@ public class JobExecutor implements BeanNameAware {
             }
         } catch (Exception e) {
             log.error("Got transaction exception:", e);
-        }finally {
-            final long myThreadId = Thread.currentThread().getId();
-            CommonState.workerThreadId.updateAndGet(l -> l == myThreadId ? -1 : l);
-            if (incremented) {
-                CommonState.activeCount.decrementAndGet();
-            }
         }
     }
 

@@ -4,9 +4,9 @@ import lombok.experimental.UtilityClass;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @UtilityClass
 public class CommonState {
-    static final AtomicInteger activeCount = new AtomicInteger(0);
-    static final AtomicLong workerThreadId = new AtomicLong(-1);
+    static final AtomicReference<Thread> workerThread = new AtomicReference<>();
 }
