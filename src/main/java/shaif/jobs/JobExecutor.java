@@ -25,6 +25,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.DefaultTransactionAttribute;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -167,20 +169,17 @@ public class JobExecutor implements BeanNameAware {
     JdbcTemplate jt;
 
     @Autowired
+    @Lazy
     @ToString.Exclude
     ApplicationContext applicationContext;
 
-    @Autowired
     @ToString.Exclude
     TransactionTemplate transactionTemplate;
 
     @Autowired
+    @Lazy
     @ToString.Exclude
     PlatformTransactionManager transactionManager;
-
-    @Autowired
-    @ToString.Exclude
-    DatabaseCleanerJob databaseCleanerJob;
 
     private JobExecutor self;
     public JobExecutor getSelf(){
@@ -303,7 +302,9 @@ public class JobExecutor implements BeanNameAware {
     }
 
     @PostConstruct
-    private void init(){
+    public void init(){
+        transactionTemplate = new TransactionTemplate(transactionManager);
+
         createTables();
         log.info("Starting with worker number={}", workersCount);
         selectRowToProcessQry = expandSpelExpression(selectRowToProcessQry);
@@ -318,6 +319,9 @@ public class JobExecutor implements BeanNameAware {
         getJobStateQry = expandSpelExpression(getJobStateQry);
         clearJobDependsOnQry = expandSpelExpression(clearJobDependsOnQry);
         clearJobQry = expandSpelExpression(clearJobQry);
+        if(threadsCount==0){
+            throw new RuntimeException("threadCount is not set");
+        }
         executorService = Executors.newFixedThreadPool(threadsCount);
         submit("databaseCleanerJob", "{}", Instant.now(), null, List.of(), List.of(), true);
         for (int i = 0; i < workersCount; i++) {
@@ -326,6 +330,9 @@ public class JobExecutor implements BeanNameAware {
             }catch (Throwable ex){
                 log.error("Exception:{}", ex.getMessage(), ex);
             }
+        }
+        if(applicationContext==null){
+            throw new RuntimeException("ApplicationContext is not set");
         }
         for(BackgroundJobHandler jobHandler: applicationContext.getBeansOfType(BackgroundJobHandler.class).values()){
             submitBackgroudJob(jobHandler);
@@ -347,6 +354,7 @@ public class JobExecutor implements BeanNameAware {
     private final BeanPropertyRowMapper<Job> beanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
     private final DefaultTransactionAttribute transactionAttribute = new DefaultTransactionAttribute();
     private volatile boolean stopProcessing = false;
+    private volatile boolean restart = false;
     private final AtomicInteger activeWorkers = new AtomicInteger(0);
 
     AtomicReference<Instant> lastDbCheck = new AtomicReference<>(Instant.now());
@@ -360,7 +368,7 @@ public class JobExecutor implements BeanNameAware {
     private void doWork() {
         boolean incremented = false;
         boolean prevSomethingFound = false;
-        Boolean somethingFound = null;
+        boolean somethingFound = false;
         activeWorkers.incrementAndGet();
         try {
             while (true) {
@@ -421,12 +429,15 @@ public class JobExecutor implements BeanNameAware {
                         log.warn("Rollback to savepoint");
                         jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
                         transactionManager.commit(ts);
-                        somethingFound = true;
                     }
                 }
                 transactionManager.commit(tsMain);
 
-                if(somethingFound) continue;
+                if(somethingFound){
+                    restart = true;
+                    continue;
+                }
+                restart = false;
 
                 lastDbCheck.accumulateAndGet(checkInstant, (oldValue, newValue)->{
                     if(oldValue.isAfter(newValue)) return oldValue;
@@ -444,6 +455,8 @@ public class JobExecutor implements BeanNameAware {
                             activeWorkers.decrementAndGet();
                             return;
                         }
+                        if(restart) break;
+
                         final long myId = Thread.currentThread().getId();
 
                         //кто первый встал - того и тапки
@@ -487,6 +500,7 @@ public class JobExecutor implements BeanNameAware {
      * @param ignoreExistingJob игнорировать ли уже существующее задание с таким же именем и параметрами
      * @return id добавленного задания
      */
+    @Transactional(propagation = Propagation.REQUIRED)
     public Long submit(@NonNull String beanName,
                        @NonNull Object parameters,
                        @NonNull Instant runAfter,
