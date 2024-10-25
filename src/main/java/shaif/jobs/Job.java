@@ -199,6 +199,14 @@ public class Job {
         return new JobExecution(getJobExecutor().submit(getOnlyBeanNameOfType(beanClass), parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
     }
 
+    public<P, C, T extends GenericJobHandler<P,C>> JobExecution startAndWait(Class<T> beanClass, @NonNull Object parameters, @NonNull Instant runAfter){
+        return new JobExecution(getJobExecutor().submit(getOnlyBeanNameOfType(beanClass), parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
+    }
+
+    public<P, C, T extends GenericJobHandler<P,C>> JobExecution startAndWait(T bean, @NonNull P parameters, @NonNull Instant runAfter){
+        return new JobExecution(getJobExecutor().start(bean, parameters, runAfter, getId(), List.of(), List.of(getId()), true), getJobExecutor());
+    }
+
     private String getOnlyBeanNameOfType(@NonNull Class<? extends JobHandler> beanClass) {
         Map<String, ? extends JobHandler> map = getJobExecutor().applicationContext.getBeansOfType(beanClass);
         if (map.size() > 1) {
@@ -221,6 +229,10 @@ public class Job {
         return submit(bean, parameters, Instant.now());
     }
 
+    public <P, C, T extends GenericJobHandler<P, C>> JobExecution start(@NonNull T bean, P parameters) {
+        return submit(bean, parameters, Instant.now());
+    }
+
     /**
      * Отправка задания на выполнение
      * @param bean бин, реализующий задание
@@ -232,6 +244,9 @@ public class Job {
         return new JobExecution(getJobExecutor().submit(bean.getBeanName(), parameters, runAfter, getId(), List.of(), List.of(), true), getJobExecutor());
     }
 
+    public<P, C, T extends GenericJobHandler<P,C>> JobExecution start(@NonNull T bean, @NonNull P parameters, @NonNull Instant runAfter){
+        return new JobExecution(getJobExecutor().start(bean, parameters, runAfter, getId(), List.of(), List.of(), true), getJobExecutor());
+    }
     /**
      * Отправка задания на выполнение
      * @param bean бин, реализующий задание

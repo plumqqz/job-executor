@@ -215,8 +215,6 @@ public class JobExecutor implements BeanNameAware {
     @ToString.Exclude
     ExecutorService executorService;
 
-    @ToString.Exclude
-    static final ObjectMapper om = new ObjectMapper();
     private String selectRowToProcessQry = "select " +
             " * " +
             " from #{schemaName}.job where not job.is_done and not job.is_failed " +
@@ -241,6 +239,8 @@ public class JobExecutor implements BeanNameAware {
             "on conflict(md5(name||parameters::text)) do nothing " +
             "returning id";
     @ToString.Exclude
+    private String getExistsJobIdQry="select id from #{schemaName}.job where md5((name || (parameters)::text))=md5(?||?::jsonb::text)";
+    @ToString.Exclude
     private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select ?, j.id from #{schemaName}.job j where j.id=?";
     @ToString.Exclude
     private String insertDependentOfQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select j.id,? from #{schemaName}.job j where j.id=?";
@@ -256,7 +256,9 @@ public class JobExecutor implements BeanNameAware {
             "   and not exists(select * from #{schemaName}.job_depends_on jdo where j.id=jdo.depends_on_job_id)" +
             " and (j.is_done and not j.is_failed) and j.next_run_after<now()-make_interval(mins:=120)";
 
-    static {
+    @ToString.Exclude
+    final ObjectMapper om = new ObjectMapper();
+    {
         om.registerModule(new JavaTimeModule());
         JavaTimeModule javaTimeModule = new JavaTimeModule();
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy-MM-dd H:m:s")));
@@ -264,6 +266,9 @@ public class JobExecutor implements BeanNameAware {
         JodaModule jodaModule = new JodaModule();
         om.registerModule(javaTimeModule);
         om.registerModule(jodaModule);
+    }
+    public ObjectMapper getObjectMapper(){
+        return om;
     }
 
     /**
@@ -314,6 +319,7 @@ public class JobExecutor implements BeanNameAware {
         updateOnContinueQry = expandSpelExpression(updateOnContinueQry);
         updateOnExceptionQry = expandSpelExpression(updateOnExceptionQry);
         insertOnSubmitQry = expandSpelExpression(insertOnSubmitQry);
+        getExistsJobIdQry = expandSpelExpression(getExistsJobIdQry);
         insertDependsOnQry = expandSpelExpression(insertDependsOnQry);
         insertDependentOfQry = expandSpelExpression(insertDependentOfQry);
         getJobStateQry = expandSpelExpression(getJobStateQry);
@@ -496,7 +502,7 @@ public class JobExecutor implements BeanNameAware {
      * @param dependsOn список id заданий, окончания выполнения которых будет ожидать отправляемое задание
      * @param dependentOf список id заданий, которые будут дожидаться окончания выполнения отправляемого задания
      * @param ignoreExistingJob игнорировать ли уже существующее задание с таким же именем и параметрами
-     * @return id добавленного задания
+     * @return id добавленного или уже существующего задания
      */
     public Long submit(@NonNull String beanName,
                        @NonNull Object parameters,
@@ -506,34 +512,45 @@ public class JobExecutor implements BeanNameAware {
                        @NonNull List<Long> dependentOf,
                        boolean ignoreExistingJob)
     {
-        return transactionTemplate.execute(ts-> {
-            Long iid=null;
-            try {
-                String toInsert = parameters instanceof String ? (String)parameters : om.writeValueAsString(parameters);
+        AtomicReference<String> toInsertRef = new AtomicReference<>();
+        while(true) {
+            var rv = transactionTemplate.execute(ts -> {
+                Long iid = null;
+                try {
+                    String toInsert = parameters instanceof String ? (String) parameters : om.writeValueAsString(parameters);
 
-                List<Long> iids = jt.queryForList(insertOnSubmitQry, Long.class,
-                        beanName, toInsert, runAfter.toEpochMilli()/1000.0, parentJobId);
-                if(iids.size()>0) iid = iids.get(0);
-            } catch (JsonProcessingException ex) {
-                throw new CannotAddRowToJobTableException(String.format("Cannot add row to job table:%s", ex.getMessage()), ex);
-            }
+                    var iids = jt.queryForList(insertOnSubmitQry, Long.class,
+                            beanName, toInsert, runAfter.toEpochMilli() / 1000.0, parentJobId);
+                    if (!iids.isEmpty()) {
+                        iid = iids.get(0);
+                    } else {
+                        toInsertRef.set(toInsert);
+                    }
+                } catch (JsonProcessingException ex) {
+                    throw new CannotAddRowToJobTableException(String.format("Cannot add row to job table:%s", ex.getMessage()), ex);
+                }
 
-            if (iid!=null) {
-                for (Long jid : dependsOn) {
-                    jt.update(insertDependsOnQry, iid, jid);
+                if (iid != null) {
+                    for (Long jid : dependsOn) {
+                        jt.update(insertDependsOnQry, iid, jid);
+                    }
+                    for (Long jid : dependentOf) {
+                        jt.update(insertDependentOfQry, iid, jid);
+                    }
+                } else {
+                    if (ignoreExistingJob) {
+                        log.warn("Submitted job already exists in job table");
+                        iid = 0L;
+                        var iids = jt.queryForList(getExistsJobIdQry, Long.class, beanName, toInsertRef.get());
+                        if (!iids.isEmpty()) iid = iids.get(0);
+                    } else {
+                        throw new JobAlreadyExistsException(String.format("Job with name %s and specified parameters already exist", beanName));
+                    }
                 }
-                for(Long jid: dependentOf){
-                    jt.update(insertDependentOfQry, iid, jid);
-                }
-            }else{
-                if(ignoreExistingJob) {
-                    log.warn("Submitted job already exists in job table");
-                }else{
-                    throw new JobAlreadyExistsException(String.format("Job with name %s and specified parameters already exist", beanName));
-                }
-            }
-            return iid;
-        });
+                return iid;
+            });
+            if(rv==null || rv>0) return rv;
+        }
     }
 
     public Long submit(@NonNull JobHandler bean,
@@ -569,7 +586,40 @@ public class JobExecutor implements BeanNameAware {
         return submit(bean.getBeanName(), parameters,Instant.now(), parentJobId, dependsOn, List.of(), true);
     }
 
-    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull T bean,
+                                                               @NonNull P parameters,
+                                                               @NonNull Instant runAfter,
+                                                               Long parentJobId,
+                                                               @NonNull List<Long> dependsOn,
+                                                               @NonNull List<Long> dependentOf,
+                                                               boolean ignoreExistingJob
+    ){
+        return submit(bean, parameters, runAfter, parentJobId, dependsOn, dependentOf, ignoreExistingJob);
+    }
+
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull T bean,
+                                                              @NonNull P parameters)
+    {
+        return submit(bean, parameters);
+    }
+
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull T bean,
+                                                              @NonNull P parameters,
+                                                              @NonNull List<Long> dependsOn
+    ){
+        return submit(bean, parameters, dependsOn);
+    }
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull T bean,
+                                                              @NonNull P parameters,
+                                                              Long parentJobId,
+                                                              @NonNull List<Long> dependsOn
+    ){
+        return submit(bean, parameters, parentJobId, dependsOn);
+    }
+
+
+
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull Class<T> beanClass,
                        @NonNull P parameters,
                        @NonNull Instant runAfter,
                        Long parentJobId,
@@ -580,19 +630,19 @@ public class JobExecutor implements BeanNameAware {
         return submit(applicationContext.getBean(beanClass), parameters, runAfter, parentJobId, dependsOn, dependentOf, ignoreExistingJob);
     }
 
-    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull Class<T> beanClass,
                                                                @NonNull P parameters)
     {
         return submit(applicationContext.getBean(beanClass), parameters);
     }
 
-    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull Class<T> beanClass,
                                                                @NonNull P parameters,
                                                                @NonNull List<Long> dependsOn
     ){
         return submit(applicationContext.getBean(beanClass), parameters, dependsOn);
     }
-    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+    public<P, C, T extends GenericJobHandler<P,C>> Long start(@NonNull Class<T> beanClass,
                                                                @NonNull P parameters,
                                                                Long parentJobId,
                                                                @NonNull List<Long> dependsOn
