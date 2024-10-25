@@ -366,9 +366,7 @@ public class JobExecutor implements BeanNameAware {
     }
 
     private void doWork() {
-        boolean incremented = false;
-        boolean prevSomethingFound = false;
-        boolean somethingFound = false;
+        boolean somethingFound;
         activeWorkers.incrementAndGet();
         try {
             while (true) {
@@ -500,7 +498,6 @@ public class JobExecutor implements BeanNameAware {
      * @param ignoreExistingJob игнорировать ли уже существующее задание с таким же именем и параметрами
      * @return id добавленного задания
      */
-    @Transactional(propagation = Propagation.REQUIRED)
     public Long submit(@NonNull String beanName,
                        @NonNull Object parameters,
                        @NonNull Instant runAfter,
@@ -571,15 +568,47 @@ public class JobExecutor implements BeanNameAware {
     ){
         return submit(bean.getBeanName(), parameters,Instant.now(), parentJobId, dependsOn, List.of(), true);
     }
+
+    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+                       @NonNull P parameters,
+                       @NonNull Instant runAfter,
+                       Long parentJobId,
+                       @NonNull List<Long> dependsOn,
+                       @NonNull List<Long> dependentOf,
+                       boolean ignoreExistingJob
+                       ){
+        return submit(applicationContext.getBean(beanClass), parameters, runAfter, parentJobId, dependsOn, dependentOf, ignoreExistingJob);
+    }
+
+    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+                                                               @NonNull P parameters)
+    {
+        return submit(applicationContext.getBean(beanClass), parameters);
+    }
+
+    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+                                                               @NonNull P parameters,
+                                                               @NonNull List<Long> dependsOn
+    ){
+        return submit(applicationContext.getBean(beanClass), parameters, dependsOn);
+    }
+    public<P, C, T extends GenericJobHandler<P,C>> Long submit(@NonNull Class<T> beanClass,
+                                                               @NonNull P parameters,
+                                                               Long parentJobId,
+                                                               @NonNull List<Long> dependsOn
+    ){
+        return submit(applicationContext.getBean(beanClass), parameters, parentJobId, dependsOn);
+    }
+
     /**
-     * Получение возвращаемого значения задания
-     * @param jobId id задания
-     * @param clazz класс, который необходимо десериализовать из JSON
-     * @param <T> тип, который необходимо десериализовать из JSON
-     * @return обернутый в Optional результат выполнения задания
-     * @throws CannotDeserializeReturnValueException если не удалась десериализация
-     * @throws NoJobFoundException не удалось найти задние с соответствующим id
-     */
+         * Получение возвращаемого значения задания
+         * @param jobId id задания
+         * @param clazz класс, который необходимо десериализовать из JSON
+         * @param <T> тип, который необходимо десериализовать из JSON
+         * @return обернутый в Optional результат выполнения задания
+         * @throws CannotDeserializeReturnValueException если не удалась десериализация
+         * @throws NoJobFoundException не удалось найти задние с соответствующим id
+         */
     public<T> Optional<T> getOptionalReturnValue(Long jobId, Class<T> clazz){
         try {
             final String content = jt.queryForObject(expandSpelExpression("select return_value::text from #{schemaName}.job where job.id=?"), String.class, jobId);
