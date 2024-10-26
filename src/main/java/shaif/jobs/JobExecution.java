@@ -24,8 +24,11 @@ public class JobExecution {
      * @param <T> тип этого класса
      * @return десериализованный объект, обернутый в Optional
      */
-    public<T> Optional<T> getReturnValue(Class<T> clazz){
+    public<T> Optional<T> getOptionalReturnValue(Class<T> clazz){
         return jobExecutor.getOptionalReturnValue(jobId, clazz);
+    }
+    public<T> T getReturnValue(Class<T> clazz){
+        return getOptionalReturnValue(clazz).get();
     }
 
     protected JobExecution(Long jobId, JobExecutor jobExecutor){
