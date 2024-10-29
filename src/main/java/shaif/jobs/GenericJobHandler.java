@@ -17,11 +17,11 @@ public abstract class GenericJobHandler<P,C> implements JobHandler{
      * @return что делать дальше - остановиться, продолжить выполнение или закончиться
      */
     @Override
-    public JobState execute(Job job) {
+    public JobState execute(Job job) throws Exception {
         P parameters = (P) job.getParameters(pClass);
         C context = (C) job.getContext(cClass);
         return execute(job, parameters, context);
     }
 
-     public abstract JobState execute(Job job, P parameters, C context);
+     public abstract JobState execute(Job job, P parameters, C context) throws Exception;
 }

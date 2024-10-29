@@ -14,5 +14,5 @@ public interface JobHandler extends BeanNameAware {
      * @param job контекс выполнения, параметры и вспомогательные методы
      * @return что делать дальше - остановиться, продолжить выполнение или закончиться
      */
-    JobState execute(Job job);
+    JobState execute(Job job) throws Exception;
 }

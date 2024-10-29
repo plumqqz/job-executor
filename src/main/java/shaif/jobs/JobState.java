@@ -18,7 +18,7 @@ public class JobState {
     private Object returnValue=null;
     Status status;
 
-    Object getReturnValue(){
+    public Object getReturnValue(){
         return returnValue;
     }
 

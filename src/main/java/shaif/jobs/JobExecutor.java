@@ -203,9 +203,7 @@ public class JobExecutor implements BeanNameAware {
     private String beanName;
 
     public String expandSpelExpression(String querySource) {
-        log.debug("Query:{}", querySource);
         var rv= spelExpressionParser.parseExpression(querySource, parserContext).getValue(this, String.class);
-        log.debug("Processed query:{}", rv);
         return rv;
     }
 
@@ -294,11 +292,11 @@ public class JobExecutor implements BeanNameAware {
                 " is_failed boolean not null default false,\n" +
                 " next_run_after timestamptz not null default now(),\n" +
                 " status_message text,\n" +
-                " parent_job_id bigint references #{schemaName}.job(id) on delete set null,\n" +
+                " parent_job_id bigint, --references #{schemaName}.job(id) on delete set null,\n" +
                 " return_value jsonb\n" +
                 ");\n" +
                 "create table #{schemaName}.job_depends_on(\n" +
-                " job_id bigint not null references #{schemaName}.job(id) on delete cascade,\n" +
+                " job_id bigint not null, --references #{schemaName}.job(id) on delete cascade,\n" +
                 " depends_on_job_id bigint not null check(depends_on_job_id<>job_id),\n" +
                 " return_value jsonb\n" +
                 ");\n" +
@@ -387,11 +385,11 @@ public class JobExecutor implements BeanNameAware {
                 }
 
                 somethingFound = false;
-                TransactionStatus tsMain = transactionManager.getTransaction(transactionAttribute);
+
                 var checkInstant = Instant.now();
+                TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                 for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
                     somethingFound =true;
-                    TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                     Object svp = ts.createSavepoint();
                     jr.setJobExecutor(this.getSelf());
                     try {
@@ -426,16 +424,16 @@ public class JobExecutor implements BeanNameAware {
                             log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
                             jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
                         }
-                        transactionManager.commit(ts);
                     } catch (Throwable ex) {
                         log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
                         ts.rollbackToSavepoint(svp);
                         log.warn("Rollback to savepoint");
                         jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
-                        transactionManager.commit(ts);
                     }
+                    break;
                 }
-                transactionManager.commit(tsMain);
+                transactionManager.commit(ts);
+                log.debug("TX commited");
 
                 if(somethingFound){
                     restart = true;
@@ -476,6 +474,7 @@ public class JobExecutor implements BeanNameAware {
                             Thread.sleep(500);
                             break;
                         }
+                        //noinspection BusyWait
                         Thread.sleep(2000);
                     }
                 } catch (NullPointerException ex) {
@@ -661,7 +660,9 @@ public class JobExecutor implements BeanNameAware {
          */
     public<T> Optional<T> getOptionalReturnValue(Long jobId, Class<T> clazz){
         try {
-            final String content = jt.queryForObject(expandSpelExpression("select return_value::text from #{schemaName}.job where job.id=?"), String.class, jobId);
+            String qry = expandSpelExpression("select return_value::text from #{schemaName}.job where job.id=?");
+            log.debug("return value query:{}, jobId={}", qry, jobId);
+            final String content = jt.queryForObject(qry, String.class, jobId);
             if(content==null){
                 return Optional.empty();
             }

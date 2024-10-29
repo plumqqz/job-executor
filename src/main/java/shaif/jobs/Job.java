@@ -100,7 +100,7 @@ public class Job {
         return (T)savedContext;
     }
 
-    protected String getContext(){
+    public String getContext(){
         if(savedContext!=null) {
             try {
                 return om.writeValueAsString(savedContext);
@@ -292,7 +292,7 @@ public class Job {
      * @return результат выполнения задания
      */
     public<T> T getReturnValue(Long jobId, Class<T> clazz){
-        return getJobExecutor().getOptionalReturnValue(jobId, clazz).orElseThrow(()->new RuntimeException("Unknown job or empty result"));
+        return getJobExecutor().getOptionalReturnValue(jobId, clazz).orElseThrow(()->new RuntimeException("Result is empty"));
     }
 
     /**

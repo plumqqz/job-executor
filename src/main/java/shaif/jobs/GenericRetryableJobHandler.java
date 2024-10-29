@@ -8,7 +8,7 @@ import java.util.function.Supplier;
 
 public abstract class GenericRetryableJobHandler<P,C> extends GenericJobHandler<P,C>{
     public abstract Map<Class<? extends Throwable>, Duration> getTimeout();
-    abstract public JobState realExecute(Job job, P p, C c);
+    abstract public JobState realExecute(Job job, P p, C c) throws Exception;
 
     @SafeVarargs
     public static <T> T tryCoalesce(Supplier<? extends T>...suppliers){
@@ -30,14 +30,14 @@ public abstract class GenericRetryableJobHandler<P,C> extends GenericJobHandler<
 
     @SuppressWarnings("Convert2MethodRef")
     @Override
-    public JobState execute(Job job, P p, C c) {
+    public JobState execute(Job job, P p, C c) throws Exception{
         try{
             return realExecute(job, p, c);
         }  catch (Throwable e) {
             if(getTimeout().containsKey(e)) {
                 return JobState.CONTINUE(tryCoalesce(()->e.getCause().getMessage(), ()->e.getMessage(), ()->"Unknown error"), getTimeout().get(e));
             }
-            throw e;
+            throw new RuntimeException(e);
         }
 
     }
