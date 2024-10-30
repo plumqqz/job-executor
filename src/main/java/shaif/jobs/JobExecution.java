@@ -63,4 +63,8 @@ public class JobExecution {
         if(jobId==null) throw  new UnknownJobIdException("jobId has not been set");
         return jobExecutor.getOptionalJobState(jobId);
     }
+
+    public Job getJob() {
+        return jobExecutor.getJobById(getJobId());
+    }
 }

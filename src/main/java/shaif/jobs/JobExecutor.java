@@ -292,12 +292,13 @@ public class JobExecutor implements BeanNameAware {
                 " is_failed boolean not null default false,\n" +
                 " next_run_after timestamptz not null default now(),\n" +
                 " status_message text,\n" +
-                " parent_job_id bigint, --references #{schemaName}.job(id) on delete set null,\n" +
+                " parent_job_id bigint,\n" +
                 " return_value jsonb\n" +
                 ");\n" +
                 "create table #{schemaName}.job_depends_on(\n" +
-                " job_id bigint not null, --references #{schemaName}.job(id) on delete cascade,\n" +
+                " job_id bigint not null,\n" +
                 " depends_on_job_id bigint not null check(depends_on_job_id<>job_id)," +
+                "primary key(job_id, depends_on_job_id),\n" +
                 "unique(depends_on_job_id, job_id),\n" +
                 " return_value jsonb\n" +
                 ");\n" +
