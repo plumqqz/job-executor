@@ -418,4 +418,6 @@ public class Job {
         return jobExecutor.listDependsOnJobs(id);
     }
 
+    public void waitFor(JobExecution jes){}
+
 }

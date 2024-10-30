@@ -705,7 +705,7 @@ public class JobExecutor implements BeanNameAware {
      * @param dependsOnJobId задание, от которого оно будет зависеть
      */
     public void dependOn(long jobId, long dependsOnJobId){
-        jt.update(expandSpelExpression("insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?)"), jobId, dependsOnJobId);
+        jt.update(expandSpelExpression("insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id)values(?,?) on conflict do nothing"), jobId, dependsOnJobId);
     }
 
     public void independOn(long jobId, long dependsOnJobId){
