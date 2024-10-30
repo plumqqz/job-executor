@@ -3,9 +3,6 @@ package shaif.jobs;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
-import shaif.jobs.GenericJobHandler;
-import shaif.jobs.Job;
-import shaif.jobs.JobState;
 
 import java.util.Map;
 import java.util.concurrent.*;
@@ -62,7 +59,7 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
             }
         }
 
-        public void commit(String message){
+        public void join(String message){
             var qv = new FromWorker();
             qv.type = QElementType.STORE;
             qv.message = message;

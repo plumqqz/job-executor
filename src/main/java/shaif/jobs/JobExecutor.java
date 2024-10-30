@@ -297,7 +297,8 @@ public class JobExecutor implements BeanNameAware {
                 ");\n" +
                 "create table #{schemaName}.job_depends_on(\n" +
                 " job_id bigint not null, --references #{schemaName}.job(id) on delete cascade,\n" +
-                " depends_on_job_id bigint not null check(depends_on_job_id<>job_id),\n" +
+                " depends_on_job_id bigint not null check(depends_on_job_id<>job_id)," +
+                "unique(depends_on_job_id, job_id),\n" +
                 " return_value jsonb\n" +
                 ");\n" +
                 "create unique index on #{schemaName}.job((md5(name||parameters::text)));\n";
