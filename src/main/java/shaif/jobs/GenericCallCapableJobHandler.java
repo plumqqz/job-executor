@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -20,11 +21,12 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
     Map<Long,JobExecutionState> queuesMap = new ConcurrentHashMap<>();
     ExecutorService es = Executors.newFixedThreadPool(16);
 
-    enum QElementType { CALL, STORE, RETURN };
+    enum QElementType { CALL, STORE, RETURN, SLEEP };
     public static class FromWorker {
         QElementType type;
         JobState jobState;
         String message;
+        Duration sleepDuration;
     }
     public static class ToWorker{}
 
@@ -63,6 +65,21 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
             var qv = new FromWorker();
             qv.type = QElementType.STORE;
             qv.message = message;
+            var jes = queuesMap.get(getId());
+            try {
+                jes.qFromWorker.put(qv);
+                jes.qToWorker.take();
+            } catch (InterruptedException e) {
+                log.error("Exception", e);
+                throw new RuntimeException(e);
+            }
+        }
+
+        public void sleep(Duration duration, String message) {
+            var qv = new FromWorker();
+            qv.type = QElementType.SLEEP;
+            qv.message = message;
+            qv.sleepDuration = duration;
             var jes = queuesMap.get(getId());
             try {
                 jes.qFromWorker.put(qv);
@@ -131,6 +148,9 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
             }
         }else if(fw.type==QElementType.RETURN){
             return fw.jobState;
+        }else if(fw.type == QElementType.SLEEP){
+            log.info("SLEEP:{} for {}", fw.message, fw.sleepDuration);
+            return JobState.CONTINUE(fw.message, fw.sleepDuration);
         }else {
             throw new RuntimeException("Unknown QElement type");
         }
