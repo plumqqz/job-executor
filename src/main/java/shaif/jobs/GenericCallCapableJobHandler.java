@@ -146,11 +146,13 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
             synchronized (jes) {
                 BeanUtils.copyProperties(jes.context, c);
             }
-            String notes = fw.jobState.getMessage();
-            if(!List.of(JobState.Status.DONE, JobState.Status.STOP, JobState.Status.ABORT).contains(fw.jobState.getStatus())){
-                log.error("(*** realExecute returns with unexpected status!="+ fw.jobState.getStatus()+"***)"+notes);
-            }
-            return JobState.DONE(fw.jobState.getReturnValue(), notes);
+            queuesMap.remove(jobId);
+            return fw.jobState;
+//            String notes = fw.jobState.getMessage();
+//            if(!List.of(JobState.Status.DONE, JobState.Status.STOP, JobState.Status.ABORT).contains(fw.jobState.getStatus())){
+//                log.error("(*** realExecute returns with unexpected status!="+ fw.jobState.getStatus()+"***)"+notes);
+//            }
+            //return JobState.DONE(fw.jobState.getReturnValue(), notes);
         }else if(fw.type == QElementType.SLEEP){
             log.info("SLEEP:{} for {}", fw.message, fw.sleepDuration);
             return JobState.CONTINUE(fw.message, fw.sleepDuration);
