@@ -9,6 +9,46 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
+/**
+ *
+ * @param <P> - job parameters
+ * @param <C> - job context
+ *
+*            This class allows two additional operations: pseudosynchronously call another jobs and get its return value and
+ *           pseudosleep in execution. This features allow to write job handlers in pure imperative code, for example
+ *           instead of
+ *           <code>
+ *               switch(context.state){
+ *                  case INITIAL:
+ *                      // do initial operations
+ *                      context.jobOne = job.submit(longRunningTaskOne....)
+ *                      context.state = LONG_RUNNING_TASK_ONE_COMPLETED;
+ *                      return JobState.CONTINUE("Await for end of longRunningTaskOne");
+ *                  case LONG_RUNNING_TASK_ONE_COMPLETED:
+ *                      context.oneValue = job.getReturnValue(context.jobOne, OneTaskReturnValue.class);
+ *                      //do some work
+ *                      context.jobTwo = job.submit(longRunningTaskTwo, ....);
+ *                      context.state = LONG_RUNNING_TASK_TWO_COMPLETED;
+ *                      return JobState.CONTINUE("Await for end of longRunningTaskTwo");
+ *                  case LONG_RUNNING_TASK_TWO_COMPLETED:
+ *                      ...
+ *               }
+ *           </code>
+ *           use
+ *           <code>
+ *              // some work
+ *              context.oneValue = job.call(longRunningTaskOne, taskOneParameters, "Wait for oneTask", OneTaskReturnValue.class);
+ *              // some another work
+ *              context.secondValue = job.call(longRunningTaskTwo, taskTwoParameters, "Wait for oneTask", SecondTaskReturnValue.class);
+ *              // and yet another work
+ *           </code>
+ *
+ *           You must note, that execution may be call many times in case of application crash, so it must handle such cases
+ *           correctly. Also, if some <i>called</i> had completed before crash, next <i>call</i> will return saved result.
+ *
+ *           Each task used GenericCallCapableJobHandler utilizes one thread completely; so, if you want to yield such thread
+ *           you may return JobState.CONTINUE
+ */
 @Service
 @Slf4j
 public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandler<P,C> {
@@ -93,6 +133,18 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
     }
 
     abstract public JobState realExecute(CallCapableJob job, P p, C c) throws Exception;
+    public Map<Class<? extends Throwable>, Duration> getTimeoutsOnExceptions(){
+        return Map.of();
+    }
+    public Duration getTimeoutOnException(Throwable e){
+        var timeouts = getTimeoutsOnExceptions();
+        if(timeouts.containsKey(e) || e.getCause()!=null && timeouts.containsKey(e.getCause())){
+            return timeouts.get(timeouts.containsKey(e) ? e : e.getCause());
+        }else {
+            return null;
+        }
+
+    }
 
     private final ToWorker toWorker = new ToWorker();
 
@@ -111,12 +163,23 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
                 jes.starting = false;
                 jes.context = c;
                 jes.ft = CompletableFuture.supplyAsync(()->{
+                    CallCapableJob ccJob=null;
                     try {
-                        jes.qFromWorker.put(retval(realExecute(new CallCapableJob(job), p, c)));
+                        ccJob = new CallCapableJob(job);
+                        jes.qFromWorker.put(retval(realExecute(ccJob, p, c)));
                         return null;
                     } catch (InterruptedException e) {
                         return null;
                     } catch (Throwable e) {
+                        var duration = getTimeoutOnException(e);
+                        if(duration!=null){
+                            try {
+                                jes.qFromWorker.put(retval(JobState.CONTINUE("Wait " + duration + " for retry", duration)));
+                            } catch (InterruptedException ex) {
+                                log.warn("Interrupted");
+                            }
+                            return null;
+                        }
                         log.error("Exception", e);
                         try {
                             jes.qFromWorker.put(retval(JobState.STOP(e.getMessage())));
@@ -148,11 +211,6 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
             }
             queuesMap.remove(jobId);
             return fw.jobState;
-//            String notes = fw.jobState.getMessage();
-//            if(!List.of(JobState.Status.DONE, JobState.Status.STOP, JobState.Status.ABORT).contains(fw.jobState.getStatus())){
-//                log.error("(*** realExecute returns with unexpected status!="+ fw.jobState.getStatus()+"***)"+notes);
-//            }
-            //return JobState.DONE(fw.jobState.getReturnValue(), notes);
         }else if(fw.type == QElementType.SLEEP){
             log.info("SLEEP:{} for {}", fw.message, fw.sleepDuration);
             return JobState.CONTINUE(fw.message, fw.sleepDuration);
