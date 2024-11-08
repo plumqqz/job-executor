@@ -20,34 +20,28 @@ import org.springframework.expression.common.TemplateParserContext;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.jdbc.core.BeanPropertyRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.DefaultTransactionAttribute;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.PostConstruct;
 import java.io.IOException;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.Array;
+import java.sql.Connection;
+import java.sql.JDBCType;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.time.temporal.TemporalUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
 /*
@@ -212,6 +206,7 @@ public class JobExecutor implements BeanNameAware {
 
     @ToString.Exclude
     ExecutorService executorService;
+    ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
     private String selectRowToProcessQry = "select " +
             " * " +
@@ -220,6 +215,21 @@ public class JobExecutor implements BeanNameAware {
             " and job.next_run_after<=now()" +
             " for update skip locked" +
             " limit 1";
+
+    private String selectRowToProcessQryEx = "select * " +
+            "from #{schemaName}.job j " +
+            "where j.next_run_after<=now() and not j.is_done and not j.is_failed  " +
+            "and case " +
+            "     when not exists(select * from playground.job_depends_on jdo, playground.job j2 where j.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done) and " +
+            "        pg_try_advisory_lock(991237, (j.id%199773)::int) then  " +
+            "        case when pg_try_advisory_lock(991238, (j.id%199773)::int) then true " +
+            "         else not pg_advisory_unlock(991237, (j.id%199773)::int) " +
+            "        end  " +
+            "     else " +
+            "        false " +
+            "     end " +
+            "order by j.id " +
+            "limit ? ";
 
     @ToString.Exclude
     private String updateOnAbortQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
@@ -313,6 +323,7 @@ public class JobExecutor implements BeanNameAware {
         createTables();
         log.info("Starting with worker number={}", workersCount);
         selectRowToProcessQry = expandSpelExpression(selectRowToProcessQry);
+        selectRowToProcessQryEx = expandSpelExpression(selectRowToProcessQryEx);
         updateOnAbortQry = expandSpelExpression(updateOnAbortQry);
         updateOnDoneQry = expandSpelExpression(updateOnDoneQry);
         updateOnStopQry = expandSpelExpression(updateOnStopQry);
@@ -330,6 +341,7 @@ public class JobExecutor implements BeanNameAware {
         }
         executorService = Executors.newFixedThreadPool(threadsCount);
         submit("databaseCleanerJob", "{}", Instant.now(), null, List.of(), List.of(), true);
+
         for (int i = 0; i < workersCount; i++) {
             try {
                 executorService.submit(this::doWork);
@@ -337,12 +349,14 @@ public class JobExecutor implements BeanNameAware {
                 log.error("Exception:{}", ex.getMessage(), ex);
             }
         }
+
         if(applicationContext==null){
             throw new RuntimeException("ApplicationContext is not set");
         }
         for(BackgroundJobHandler jobHandler: applicationContext.getBeansOfType(BackgroundJobHandler.class).values()){
             submitBackgroudJob(jobHandler);
         }
+        //scheduledExecutorService.schedule(this::realDoWork, 0, TimeUnit.MILLISECONDS);
     }
 
     private void submitBackgroudJob(BackgroundJobHandler jobHandler) {
@@ -357,7 +371,7 @@ public class JobExecutor implements BeanNameAware {
                 true);
     }
 
-    private final BeanPropertyRowMapper<Job> beanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
+    private final BeanPropertyRowMapper<Job> jobBeanPropertyRowMapper = new BeanPropertyRowMapper<>(Job.class);
     private final DefaultTransactionAttribute transactionAttribute = new DefaultTransactionAttribute();
     private volatile boolean stopProcessing = false;
     private volatile boolean restart = false;
@@ -390,7 +404,7 @@ public class JobExecutor implements BeanNameAware {
 
                 var checkInstant = Instant.now();
                 TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
-                for (Job jr : jt.query(selectRowToProcessQry, beanPropertyRowMapper)) {
+                for (Job jr : jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper)) {
                     somethingFound =true;
                     Object svp = ts.createSavepoint();
                     jr.setJobExecutor(this.getSelf());
@@ -489,6 +503,129 @@ public class JobExecutor implements BeanNameAware {
             }
         } catch (Exception e) {
             log.error("Got transaction exception:", e);
+        }
+    }
+
+    AtomicInteger busyWorkerCnt = new AtomicInteger();
+
+    private void realDoWork(){
+        AtomicInteger foundCnt = new AtomicInteger();
+        try {
+            int availWorkerCnt = threadsCount - busyWorkerCnt.get();
+            log.debug("availWorkerCnt={} totalWorkerCnt={} busyWorkerCnt={}", availWorkerCnt, threadsCount, busyWorkerCnt.get());
+            if (availWorkerCnt > 0) {
+                var locks = new ArrayList<Long>();
+                AtomicReference<CyclicBarrier> cbr = new AtomicReference<>();
+                transactionTemplate.executeWithoutResult((tssOuter) -> {
+                    List<Job> jobs = jt.query(selectRowToProcessQryEx, jobBeanPropertyRowMapper, availWorkerCnt);
+                    cbr.set(new CyclicBarrier(jobs.size() + 1));
+                    for (var jr : jobs) {
+                        log.debug("Found ready job with id={}", jr.getId());
+                        foundCnt.incrementAndGet();
+                        busyWorkerCnt.incrementAndGet();
+                        locks.add(jr.getId());
+                        executorService.submit(() -> {
+                            log.debug("Start worker thread");
+                            try {
+                                transactionTemplate.executeWithoutResult(ts -> {
+                                    jr.setJobExecutor(this.getSelf());
+                                    Object svp = ts.createSavepoint();
+
+                                    boolean needCountDown = true;
+                                    try {
+                                        log.debug("Worker thread:try to get first lock at {}", jr.id);
+                                        jt.queryForObject("select pg_advisory_xact_lock(991237, (?%199773)::int)", String.class, jr.id);
+                                        log.debug("Worker thread:first lock obtained, wait on barrier");
+                                        cbr.get().await();
+                                        needCountDown = false;
+                                        log.debug("Worker thread:try to get second lock at {}", jr.id);
+                                        jt.queryForObject("select pg_advisory_xact_lock(991238, (?%199773)::int)", String.class, jr.id);
+                                        log.debug("Lock is obtained");
+                                        final JobHandler executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
+                                        JobState result = executionBean.execute(jr);
+                                        log.debug("Execution result:{}", result.getStatus());
+                                        if (result == null) {
+                                            result = JobState.DONE("Done");
+                                        }
+                                        if (result.getStatus() == JobState.Status.ABORT) {
+                                            ts.rollbackToSavepoint(svp);
+                                            log.error("ABORT job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
+
+                                            jt.update(updateOnAbortQry, result.getMessage(), jr.getId());
+                                        } else if (result.getStatus() == JobState.Status.DONE) {
+                                            ts.releaseSavepoint(svp);
+                                            log.info("DONE job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
+
+                                            jt.update(updateOnDoneQry,
+                                                    result.getMessage(),
+                                                    jr.getContext(),
+                                                    result.getReturnValue() != null ? om.writeValueAsString(result.getReturnValue()) : null,
+                                                    jr.getId());
+                                            if (executionBean instanceof BackgroundJobHandler) {
+                                                this.submitBackgroudJob((BackgroundJobHandler) executionBean);
+                                            }
+                                        } else if (result.getStatus() == JobState.Status.STOP) {
+                                            ts.releaseSavepoint(svp);
+                                            log.info("STOP job {}/{}:{}", jr.getName(), jr.getId(), result.getMessage());
+                                            jt.update(updateOnStopQry, result.getMessage(), jr.getContext(), jr.getId());
+                                        } else if (result.getStatus() == JobState.Status.CONTINUE) {
+                                            ts.releaseSavepoint(svp);
+                                            log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
+                                            jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
+                                        }
+                                    } catch (Throwable ex) {
+                                        log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
+                                        ts.rollbackToSavepoint(svp);
+                                        log.warn("Rollback to savepoint");
+                                        jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
+                                    } finally {
+                                        if(needCountDown) {
+                                            try {
+                                                cbr.get().await();
+                                            } catch (InterruptedException | BrokenBarrierException e) {
+                                                throw new RuntimeException(e);
+                                            }
+                                        }
+                                    }
+
+                                    });
+                                    log.info("Going to commit worker tx");
+                                } catch (Throwable t) {
+                                    log.error("Exception:", t);
+                                } finally {
+                                    busyWorkerCnt.decrementAndGet();
+                                }
+                            });
+                        }
+                        if (!locks.isEmpty()) {
+                            Array sqlLocksArray = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.BIGINT.getName(), locks.toArray()));
+                            log.debug("Going to release all first locks:{}", sqlLocksArray);
+                            var unlocked = jt.queryForObject("select count(case when pg_advisory_unlock(991237, (i%199773)::int) then 1 else 0 end) from unnest(?) as t(i)", Long.class, sqlLocksArray);
+                            log.debug("First locks {} are released, cbr count is {}, waiting is {}", unlocked, cbr.get().getParties(), cbr.get().getNumberWaiting());
+                            try {
+                                cbr.get().await();
+                            } catch (InterruptedException | BrokenBarrierException e) {
+                                log.error("Exception on await", e);
+                                throw new RuntimeException(e);
+                            }
+                            log.debug("Going to release all second locks:{}", sqlLocksArray);
+                            unlocked = jt.queryForObject("select count(case when pg_advisory_unlock(991238, (i%199773)::int) then 1 end) from unnest(?) as t(i)", Long.class, sqlLocksArray);
+                            log.debug("Second locks {} are released", unlocked);
+                            log.debug("Total found:{}", foundCnt.get());
+                        }
+                    }
+                ); // transactionTemplate
+
+                log.trace("main loop tx has been completed, database locks are released");
+            }
+        }catch (Throwable t){
+            log.error("Exception:", t);
+        } finally {
+            if(foundCnt.get()>0){
+                scheduledExecutorService.schedule(this::realDoWork, 0, TimeUnit.MILLISECONDS);
+            }else{
+                scheduledExecutorService.schedule(this::realDoWork, 2000, TimeUnit.MILLISECONDS);
+            }
         }
     }
 
@@ -683,7 +820,7 @@ public class JobExecutor implements BeanNameAware {
      * @return JobState, обернутый в Optional. Доступен только статус и сообщение.
      */
     Optional<JobState> getOptionalJobState(long jobId){
-        List<Job> jobs = jt.query(getJobStateQry, beanPropertyRowMapper, jobId);
+        List<Job> jobs = jt.query(getJobStateQry, jobBeanPropertyRowMapper, jobId);
         if(jobs.size()>1){
             throw new GetMoreThanOneRowFromJobTable("Get more than one row from job table when access by primary key");
         }
