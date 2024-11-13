@@ -5,7 +5,6 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -133,11 +132,11 @@ public abstract class GenericCallCapableJobHandler<P,C> extends GenericJobHandle
     }
 
     abstract public JobState realExecute(CallCapableJob job, P p, C c) throws Exception;
-    public Map<Class<? extends Throwable>, Duration> getTimeoutsOnExceptions(){
+    public Map<Class<? extends Throwable>, Duration> getRetryTimeoutsOnExceptions(){
         return Map.of();
     }
     public Duration getTimeoutOnException(Throwable e){
-        var timeouts = getTimeoutsOnExceptions();
+        var timeouts = getRetryTimeoutsOnExceptions();
         if(timeouts.containsKey(e) || e.getCause()!=null && timeouts.containsKey(e.getCause())){
             return timeouts.get(timeouts.containsKey(e) ? e : e.getCause());
         }else {

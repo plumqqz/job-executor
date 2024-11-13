@@ -217,18 +217,17 @@ public class JobExecutor implements BeanNameAware {
             " limit 1";
 
     private String selectRowToProcessQryEx = "select * " +
-            "from #{schemaName}.job j " +
-            "where j.next_run_after<=now() and not j.is_done and not j.is_failed  " +
-            "and case " +
-            "     when not exists(select * from playground.job_depends_on jdo, playground.job j2 where j.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done) and " +
-            "        pg_try_advisory_lock(991237, (j.id%199773)::int) then  " +
-            "        case when pg_try_advisory_lock(991238, (j.id%199773)::int) then true " +
-            "         else not pg_advisory_unlock(991237, (j.id%199773)::int) " +
-            "        end  " +
-            "     else " +
-            "        false " +
-            "     end " +
-            "order by j.id " +
+            " from #{schemaName}.job j " +
+            " where j.next_run_after<=now() and not j.is_done and not j.is_failed " +
+            "        and " +
+            "        case when not exists(select * from playground.job_depends_on jdo, playground.job j2 where j.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done) then\n" +
+            "             case when pg_try_advisory_lock(991237, (j.id%2000000000)::int) then " +
+            "                  case when pg_try_advisory_lock(991238, (j.id%2000000000)::int) then true " +
+            "                       else not pg_advisory_unlock(991237, (j.id%2000000000)::int) " +
+            "                  end " +
+            "             end " +
+            "        end " +
+            " order by j.id " +
             "limit ? ";
 
     @ToString.Exclude
@@ -356,7 +355,7 @@ public class JobExecutor implements BeanNameAware {
         for(BackgroundJobHandler jobHandler: applicationContext.getBeansOfType(BackgroundJobHandler.class).values()){
             submitBackgroudJob(jobHandler);
         }
-        //scheduledExecutorService.schedule(this::realDoWork, 0, TimeUnit.MILLISECONDS);
+//        scheduledExecutorService.schedule(this::realDoWork, 0, TimeUnit.MILLISECONDS);
     }
 
     private void submitBackgroudJob(BackgroundJobHandler jobHandler) {
@@ -437,7 +436,7 @@ public class JobExecutor implements BeanNameAware {
                             jt.update(updateOnStopQry, result.getMessage(), jr.getContext(), jr.getId());
                         } else if (result.getStatus() == JobState.Status.CONTINUE) {
                             ts.releaseSavepoint(svp);
-                            log.info("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
+                            log.debug("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
                             jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
                         }
                     } catch (Throwable ex) {
@@ -507,17 +506,47 @@ public class JobExecutor implements BeanNameAware {
     }
 
     AtomicInteger busyWorkerCnt = new AtomicInteger();
+/*
+Получение готовых к выполнению заданий и выполнение их. Функционально аналог doWork, но работает по-другому - если
+doWork базируется на select for update ... skip locked, то в данном случае задача решается с помощью пар advisory-блокировок.
+В отличие от doWork, где каждый тред самостоятельно выгребает задания, тут задания выгребает один поток и отдает
+их на асинхронное выполнение воркерам. Корректность работы обеспечивается с помощью пар блокировок и барьера - основной поток
+получает готовые к выполнению задания (которые не done, не failed, у которых нет незаконченных заданий, которые они
+ожидают). Если такое задание нашлось, то основной поток пытается взять две блокировки, используюя id задания в качестве
+ключа - первая (ключ1 991237, id задания) и вторая(ключ1 991238, id задания) (для безопасного приведения к целому числу используется остаток от деления на 2 млрд).
+Если удалось взять эти две блокировки, то для каждого найденного задания запускается тред-воркер, который пытается получить
+первую блокировку. Тем временем основной тред, запустив треды-воркеры, разблокирует все первые блокировки и ожидает треды-воркеры на барьере;
+треды-воркеры тем временем получают блокировки и также подходят к барьеру; когда барьер преодолен, основной тред снивает все вторыые блокироки;
+треды-воркеры их получают. Такой двухшаговый процесс позволяет безопасно передать задания воркерам.
+Особое внимание следует обратить на запрос, получающий готовые к выполнению задания
+    select *  
+            from playground.job j  
+            where j.next_run_after<=now() and not j.is_done and not j.is_failed   
+            and not exists(select * from playground.job_depends_on jdo, playground.job j2 where j.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done)  
+            and
+                case when not exists(select * from playground.job_depends_on jdo, playground.job j2 where j.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done) then
+                     case when pg_try_advisory_lock(991237, (j.id%199773)::int) then
+                        case when pg_try_advisory_lock(991238, (j.id%199773)::int) then true
+                             else not pg_advisory_unlock(991237, (j.id%199773)::int)
+                        end
+                    end
+                 end  
+            order by j.id
 
+В силу осообенностей вычисления постгресом условий во where (сначала вычисляются самые дешевые операции, а не указанные первыми в тексте запроса)
+приходится сначала с помощью case смотреть, если ли какие-то зависимые задания и только после этого получать блокировки, опять-таки, для
+соблюдения должного порядка, через case; при этом, если не удалось получить вторую блокировку, надо снять и первую
+ */
     private void realDoWork(){
         AtomicInteger foundCnt = new AtomicInteger();
         try {
             int availWorkerCnt = threadsCount - busyWorkerCnt.get();
             log.debug("availWorkerCnt={} totalWorkerCnt={} busyWorkerCnt={}", availWorkerCnt, threadsCount, busyWorkerCnt.get());
             if (availWorkerCnt > 0) {
-                var locks = new ArrayList<Long>();
-                AtomicReference<CyclicBarrier> cbr = new AtomicReference<>();
-                transactionTemplate.executeWithoutResult((tssOuter) -> {
-                    List<Job> jobs = jt.query(selectRowToProcessQryEx, jobBeanPropertyRowMapper, availWorkerCnt);
+                transactionTemplate.executeWithoutResult(tssOuter -> {
+                    var locks = new ArrayList<Long>();
+                    var cbr = new AtomicReference<CyclicBarrier>();
+                    var jobs = jt.query(selectRowToProcessQryEx, jobBeanPropertyRowMapper, availWorkerCnt);
                     cbr.set(new CyclicBarrier(jobs.size() + 1));
                     for (var jr : jobs) {
                         log.debug("Found ready job with id={}", jr.getId());
@@ -531,15 +560,15 @@ public class JobExecutor implements BeanNameAware {
                                     jr.setJobExecutor(this.getSelf());
                                     Object svp = ts.createSavepoint();
 
-                                    boolean needCountDown = true;
+                                    boolean needAwait = true;
                                     try {
                                         log.debug("Worker thread:try to get first lock at {}", jr.id);
-                                        jt.queryForObject("select pg_advisory_xact_lock(991237, (?%199773)::int)", String.class, jr.id);
+                                        jt.queryForObject("select pg_advisory_xact_lock(991237, (?%2000000000)::int)", String.class, jr.id);
                                         log.debug("Worker thread:first lock obtained, wait on barrier");
                                         cbr.get().await();
-                                        needCountDown = false;
+                                        needAwait = false;
                                         log.debug("Worker thread:try to get second lock at {}", jr.id);
-                                        jt.queryForObject("select pg_advisory_xact_lock(991238, (?%199773)::int)", String.class, jr.id);
+                                        jt.queryForObject("select pg_advisory_xact_lock(991238, (?%2000000000)::int)", String.class, jr.id);
                                         log.debug("Lock is obtained");
                                         final JobHandler executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
                                         JobState result = executionBean.execute(jr);
@@ -579,7 +608,7 @@ public class JobExecutor implements BeanNameAware {
                                         log.warn("Rollback to savepoint");
                                         jt.update(updateOnExceptionQry, ex.getMessage(), jr.getId());
                                     } finally {
-                                        if(needCountDown) {
+                                        if(needAwait) {
                                             try {
                                                 cbr.get().await();
                                             } catch (InterruptedException | BrokenBarrierException e) {
@@ -588,33 +617,32 @@ public class JobExecutor implements BeanNameAware {
                                         }
                                     }
 
-                                    });
-                                    log.info("Going to commit worker tx");
-                                } catch (Throwable t) {
-                                    log.error("Exception:", t);
-                                } finally {
-                                    busyWorkerCnt.decrementAndGet();
-                                }
-                            });
-                        }
-                        if (!locks.isEmpty()) {
-                            Array sqlLocksArray = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.BIGINT.getName(), locks.toArray()));
-                            log.debug("Going to release all first locks:{}", sqlLocksArray);
-                            var unlocked = jt.queryForObject("select count(case when pg_advisory_unlock(991237, (i%199773)::int) then 1 else 0 end) from unnest(?) as t(i)", Long.class, sqlLocksArray);
-                            log.debug("First locks {} are released, cbr count is {}, waiting is {}", unlocked, cbr.get().getParties(), cbr.get().getNumberWaiting());
-                            try {
-                                cbr.get().await();
-                            } catch (InterruptedException | BrokenBarrierException e) {
-                                log.error("Exception on await", e);
-                                throw new RuntimeException(e);
+                                });
+                                log.debug("Going to commit worker tx");
+                            } catch (Throwable t) {
+                                log.error("Exception:", t);
+                            } finally {
+                                busyWorkerCnt.decrementAndGet();
                             }
-                            log.debug("Going to release all second locks:{}", sqlLocksArray);
-                            unlocked = jt.queryForObject("select count(case when pg_advisory_unlock(991238, (i%199773)::int) then 1 end) from unnest(?) as t(i)", Long.class, sqlLocksArray);
-                            log.debug("Second locks {} are released", unlocked);
-                            log.debug("Total found:{}", foundCnt.get());
-                        }
+                        });
                     }
-                ); // transactionTemplate
+                    if (!locks.isEmpty()) {
+                        Array sqlLocksArray = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.BIGINT.getName(), locks.toArray()));
+                        log.debug("Going to release all first locks:{}", sqlLocksArray);
+                        var unlocked = jt.queryForObject("select count(case when pg_advisory_unlock(991237, (i%2000000000)::int) then 1 else 0 end) from unnest(?) as t(i)", Long.class, sqlLocksArray);
+                        log.debug("First locks {} are released, cbr count is {}, waiting is {}", unlocked, cbr.get().getParties(), cbr.get().getNumberWaiting());
+                        try {
+                            cbr.get().await();
+                        } catch (InterruptedException | BrokenBarrierException e) {
+                            log.error("Exception on await", e);
+                            throw new RuntimeException(e);
+                        }
+                        log.debug("Going to release all second locks:{}", sqlLocksArray);
+                        unlocked = jt.queryForObject("select count(case when pg_advisory_unlock(991238, (i%2000000000)::int) then 1 end) from unnest(?) as t(i)", Long.class, sqlLocksArray);
+                        log.debug("Second locks {} are released", unlocked);
+                        log.debug("Total found:{}", foundCnt.get());
+                    }
+                }); // transactionTemplate
 
                 log.trace("main loop tx has been completed, database locks are released");
             }
