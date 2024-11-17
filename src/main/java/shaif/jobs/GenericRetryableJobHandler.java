@@ -34,10 +34,15 @@ public abstract class GenericRetryableJobHandler<P,C> extends GenericJobHandler<
         try{
             return realExecute(job, p, c);
         }  catch (Throwable e) {
-            if(getTimeout().containsKey(e)) {
-                return JobState.CONTINUE(tryCoalesce(()->e.getCause().getMessage(), ()->e.getMessage(), ()->"Unknown error"), getTimeout().get(e));
+            var timeouts = getTimeout();
+            var ex = e;
+            while (ex!=null) {
+                if(timeouts.containsKey(ex.getClass())){
+                        return JobState.CONTINUE(e.getMessage(), timeouts.get(ex.getClass()));
+                }
+                ex = ex.getCause();
             }
-            throw new RuntimeException(e);
+            throw e;
         }
 
     }

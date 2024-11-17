@@ -394,14 +394,8 @@ public class JobExecutor implements BeanNameAware {
                     return;
                 }
 
-                if (Duration.between(lastDbCheck.get(), Instant.now()).get(ChronoUnit.NANOS) < 500000000L) {
-                    Thread.sleep(500);
-                    continue;
-                }
-
                 somethingFound = false;
 
-                var checkInstant = Instant.now();
                 TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
                 for (Job jr : jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper)) {
                     somethingFound =true;
@@ -451,53 +445,22 @@ public class JobExecutor implements BeanNameAware {
                 log.debug("TX commited");
 
                 if(somethingFound){
-                    restart = true;
                     continue;
                 }
-                restart = false;
-
-                lastDbCheck.accumulateAndGet(checkInstant, (oldValue, newValue)->{
-                    if(oldValue.isAfter(newValue)) return oldValue;
-                    return newValue;
+                //кто первый встал - того и тапки
+                var workerThread = CommonState.workerThread.updateAndGet(t ->{
+                    if(t==null || !t.isAlive()){
+                        return Thread.currentThread();
+                    }
+                    return t;
                 });
 
-                /*
-                Пытаемся минимизировать доступ к базе в случае отсутствия сообщений.
-                Если все воркеры простаивают, то к базе лезет только один и смотрит,
-                если ли там чего
-                 */
-                try {
-                    while (true) {
-                        if(stopProcessing){
-                            activeWorkers.decrementAndGet();
-                            return;
-                        }
-                        if(restart) break;
-
-                        final long myId = Thread.currentThread().getId();
-
-                        //кто первый встал - того и тапки
-                        var workerThread = CommonState.workerThread.updateAndGet(t ->{
-                            if(t==null || !t.isAlive()){
-                                return Thread.currentThread();
-                            }
-                            return t;
-                        });
-
-                        if (workerThread.getId() == myId) {
-                            //noinspection BusyWait
-                            Thread.sleep(500);
-                            break;
-                        }
-                        //noinspection BusyWait
-                        Thread.sleep(2000);
-                    }
-                } catch (NullPointerException ex) {
-                    log.error("Get unexpected null pointer exception");
-                    return;
-                } catch (InterruptedException e) {
-                    log.error("Interrupted");
-                    return;
+                if (workerThread.getId() == Thread.currentThread().getId()) {
+                    //noinspection BusyWait
+                    Thread.sleep(500);
+                } else {
+                    //noinspection BusyWait
+                    Thread.sleep(2000);
                 }
             }
         } catch (Exception e) {
