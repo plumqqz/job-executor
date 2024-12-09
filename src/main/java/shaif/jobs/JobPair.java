@@ -16,15 +16,15 @@ package shaif.jobs;
  *         JobPair<Context.JobStatus> rv = switch (c.jobStatus) {
  *            case INITIAL -> {
  *                  // do some work
- *                  yield JobPair.of(STEP1, JobState.CONTINUE("Initialized");
+ *                  yield JobPair.of(STEP1, JobState.CONTINUE("Initialized"));
  *              }
  *            case STEP1 -> {
  *               // do some work
- *               yield JobPair.of(STEP2, JobState.CONTINUE("STEP1 is done");*
+ *               yield JobPair.of(STEP2, JobState.CONTINUE("STEP1 is done"));
  *            }
  *            case STEP2 -> {
  *               // do some work
- *               yield JobPair.of(DONE, JobState.DONE("STEP2 is done");*
+ *               yield JobPair.of(DONE, JobState.DONE("STEP2 is done"));
  *            }
  *          };
  *          c.status = rv.getValue(c.status);

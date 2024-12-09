@@ -12,14 +12,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.support.DataAccessUtils;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.ParserContext;
 import org.springframework.expression.common.TemplateParserContext;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.jdbc.core.BeanPropertyRowMapper;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
@@ -28,21 +28,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.PostConstruct;
 import java.io.IOException;
-import java.sql.Array;
-import java.sql.Connection;
-import java.sql.JDBCType;
+import java.sql.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 /*
 
@@ -235,9 +232,9 @@ public class JobExecutor implements BeanNameAware {
     @ToString.Exclude
     private String updateOnDoneQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, is_done=true, return_value=?::jsonb where id=?";
     @ToString.Exclude
-    private String updateOnStopQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, is_failed=true where id=?";
+    private String updateOnStopQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, next_run_after='infinity' where id=?";
     @ToString.Exclude
-    private String updateOnContinueQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, next_run_after=coalesce(to_timestamp(?),next_run_after) where id=?";
+    private String updateOnContinueQry = "update #{schemaName}.job set status_message=?, context=?::jsonb, next_run_after=coalesce(to_timestamp(?),next_run_after), return_value=coalesce(?::jsonb, return_value) where id=?";
     @ToString.Exclude
     private String updateOnExceptionQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
     @ToString.Exclude
@@ -352,10 +349,6 @@ public class JobExecutor implements BeanNameAware {
         if(applicationContext==null){
             throw new RuntimeException("ApplicationContext is not set");
         }
-        for(BackgroundJobHandler jobHandler: applicationContext.getBeansOfType(BackgroundJobHandler.class).values()){
-            submitBackgroudJob(jobHandler);
-        }
-//        scheduledExecutorService.schedule(this::realDoWork, 0, TimeUnit.MILLISECONDS);
     }
 
     private void submitBackgroudJob(BackgroundJobHandler jobHandler) {
@@ -431,7 +424,7 @@ public class JobExecutor implements BeanNameAware {
                         } else if (result.getStatus() == JobState.Status.CONTINUE) {
                             ts.releaseSavepoint(svp);
                             log.debug("CONTINUE job {}/{}, next run at {}:{}", jr.getName(), jr.getId(), result.getNextRun(), result.getMessage());
-                            jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, jr.getId());
+                            jt.update(updateOnContinueQry, result.getMessage(), jr.getContext(), result.getNextRun().toEpochMilli() / 1000.0, result.getReturnValue(), jr.getId());
                         }
                     } catch (Throwable ex) {
                         log.error("EXCEPTION in job {}/{}:{}", jr.getName(), jr.getId(), ex.getMessage(), ex);
@@ -803,6 +796,26 @@ doWork базируется на select for update ... skip locked, то в да
         } catch (EmptyResultDataAccessException ex){
             throw new NoJobFoundException("No job found for id=" + jobId, ex);
         }
+    }
+
+    public <T> Map<Long,T> getReturnValues(Iterable<Long> jobIds, Class<T> clazz) {
+        String qry = expandSpelExpression("select job.id, return_value::text from #{schemaName}.job where job.id=any(?)");
+        return jt.query(qry, (PreparedStatementSetter)  ps-> ps.setArray(1, jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.BIGINT.getName(), StreamSupport.stream(jobIds.spliterator(), false).toArray()))),
+          rs -> {
+                        try {
+                            var rv = new HashMap<Long,T>();
+                            while(rs.next()) {
+                                var json = rs.getString(2);
+                                if(json!=null) {
+                                    rv.put(rs.getLong(1), om.readValue(json, clazz));
+                                }
+                            }
+                            return rv;
+                        } catch (JsonProcessingException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+        );
     }
 
     /**

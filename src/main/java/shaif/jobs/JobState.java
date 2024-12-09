@@ -128,6 +128,31 @@ public class JobState {
      * @param duration период ожидания
      * @return созданное состояние
      */
+
+    public static JobState CONTINUE(Object returnValue, @NonNull String message, @NonNull Duration duration){
+        var rv = new JobState();
+        rv.status = CONTINUE;
+        rv.message = message;
+        rv.nextRun = Instant.now().plus(duration);
+        rv.returnValue = returnValue;
+        return rv;
+    }
+    public static JobState CONTINUE(Object returnValue, @NonNull String message, @NonNull Instant nextRun){
+        var rv = new JobState();
+        rv.status =CONTINUE;
+        rv.message=message;
+        rv.nextRun = nextRun;
+        rv.returnValue = returnValue;
+        return rv;
+    }
+
+    /**
+     * Создает состояние CONTINUE
+     * Задание готово к выполнению после истечения периода времени duration
+     * @param message сообщение
+     * @param duration период ожидания
+     * @return созданное состояние
+     */
     public static JobState CONTINUE(@NonNull String message, @NonNull Duration duration){
         var rv = new JobState();
         rv.status = CONTINUE;
