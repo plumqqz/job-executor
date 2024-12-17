@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.annotation.Scope;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.support.DataAccessUtils;
@@ -182,6 +183,9 @@ public class JobExecutor implements BeanNameAware {
     @Value("${job-executor.schema-name:tsy}")
     String schemaName;
 
+    @Value("${job-executor.job-name-filter:true}")
+    String jobNameFilter;
+
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     @ToString.Exclude
@@ -210,6 +214,7 @@ public class JobExecutor implements BeanNameAware {
             " from #{schemaName}.job where not job.is_done and not job.is_failed " +
             " and not exists(select * from #{schemaName}.job_depends_on jdo, #{schemaName}.job j2 where job.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done)" +
             " and job.next_run_after<=now()" +
+            " and #{jobNameFilter}" +
             " for update skip locked" +
             " limit 1";
 
