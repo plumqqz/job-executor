@@ -12,8 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.context.annotation.Scope;
-import org.springframework.dao.DataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.support.DataAccessUtils;
 import org.springframework.expression.ExpressionParser;
@@ -30,11 +28,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.sql.*;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -209,6 +205,12 @@ public class JobExecutor implements BeanNameAware {
     ExecutorService executorService;
     ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
+    @ToString.Exclude
+    Semaphore workerSemaphore;
+
+    @ToString.Exclude
+    private volatile int semaphorePermitsCount =0;
+
     private String selectRowToProcessQry = "select " +
             " * " +
             " from #{schemaName}.job where not job.is_done and not job.is_failed " +
@@ -341,6 +343,11 @@ public class JobExecutor implements BeanNameAware {
             throw new RuntimeException("threadCount is not set");
         }
         executorService = Executors.newFixedThreadPool(threadsCount);
+
+        int semaphoresCount = Math.min(10, threadsCount);
+        workerSemaphore = new Semaphore(semaphoresCount);
+        this.semaphorePermitsCount = semaphoresCount;
+
         submit("databaseCleanerJob", "{}", Instant.now(), null, List.of(), List.of(), true);
 
         for (int i = 0; i < workersCount; i++) {
@@ -395,7 +402,31 @@ public class JobExecutor implements BeanNameAware {
                 somethingFound = false;
 
                 TransactionStatus ts = transactionManager.getTransaction(transactionAttribute);
-                for (Job jr : jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper)) {
+                List<Job> jobToRun = null;
+
+                try {
+                    jobToRun = jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper);
+                }finally {
+                    // adaptive semaphore permits runtime tuning:
+                    // when we have nothing to do, we'll decrease available permits till one
+                    // when we have jobs to process we'll increase available permits by one until 10
+                    if(jobToRun==null){ // we have had error during querying the database; leave all as is
+                        workerSemaphore.release();
+                    }else {
+                        if (jobToRun.isEmpty()) synchronized (workerSemaphore){
+                            if (semaphorePermitsCount > 1) {
+                                semaphorePermitsCount--;
+                            }
+                        } else synchronized (workerSemaphore) {
+                            if (semaphorePermitsCount < 10) {
+                                semaphorePermitsCount++;
+                                workerSemaphore.release(2);
+                            }
+                        }
+                    }
+                    log.debug("Current semaphore permits:{}", semaphorePermitsCount);
+                }
+                for (Job jr : jobToRun) {
                     somethingFound =true;
                     Object svp = ts.createSavepoint();
                     jr.setJobExecutor(this.getSelf());
@@ -877,7 +908,7 @@ doWork базируется на select for update ... skip locked, то в да
                     rv.setId(rs.getLong("id"));
                     rv.setName(rs.getString("name"));
                     rv.setParentJobId(rs.getLong("parent_job_id"));
-                    rv.setNextRunAfter(((java.sql.Timestamp)rs.getObject("next_run_after")).toInstant());
+                    rv.setNextRunAfter(((Timestamp)rs.getObject("next_run_after")).toInstant());
                     return rv;
                 }, jobId));
         if(null==job) return null;
