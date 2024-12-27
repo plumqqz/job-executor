@@ -15,4 +15,7 @@ public interface JobHandler extends BeanNameAware {
      * @return что делать дальше - остановиться, продолжить выполнение или закончиться
      */
     JobState execute(Job job) throws Exception;
+    default int getMaxRunningLimit(){
+        return Integer.MAX_VALUE;
+    }
 }
