@@ -385,6 +385,7 @@ public class JobExecutor implements BeanNameAware {
         executorService.shutdown();
     }
 
+    AtomicInteger idleThreads = new AtomicInteger();
     final private ConcurrentHashMap<String, Integer> runningBeans = new ConcurrentHashMap<>();
     final private ConcurrentHashMap<String, Integer> runningBeanLimits = new ConcurrentHashMap<>();
     final private String[] emptyStringArray = new String[]{};
@@ -397,18 +398,27 @@ public class JobExecutor implements BeanNameAware {
                 }
 
                 List<Job> jobToRun = null;
-                var toFilterOut = runningBeanLimits.entrySet().stream().filter(e -> runningBeans.get(e.getKey()) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList());
-                Array toFilterOutParameter = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.VARCHAR.getName(), toFilterOut.toArray(emptyStringArray)));
-
-                log.debug("To filter out:{}", toFilterOut);
-                log.debug("Current semaphore permits before aquire:{}, permits in semaphore:{}", semaphorePermitsCount, workerSemaphore.availablePermits());
-
-                TransactionStatus ts;
-                workerSemaphore.acquire();
+                TransactionStatus ts=null;
+                Job jr=null;
+                JobHandler executionBean=null;
+                workerSemaphore.acquireUninterruptibly();
                 try {
+                    var toFilterOut = runningBeanLimits.entrySet().stream().filter(e -> runningBeans.get(e.getKey()) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList());
+                    Array toFilterOutParameter = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.VARCHAR.getName(), toFilterOut.toArray(emptyStringArray)));
+
+                    log.debug("To filter out:{}", toFilterOut);
+                    log.debug("Current semaphore permits before aquire:{}, permits in semaphore:{}, idleThreads:{}", semaphorePermitsCount, workerSemaphore.availablePermits(), idleThreads.get());
+
                     ts = transactionManager.getTransaction(transactionAttribute);
                     jobToRun = jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper, toFilterOutParameter);
                     log.debug("Job to run:{}", jobToRun);
+                    if(!jobToRun.isEmpty()){
+                        jr = jobToRun.get(0);
+                        executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
+                        runningBeans.compute(jr.getName(), (k, v) -> v == null ? 1 : v + 1);
+                        var limit = executionBean.getMaxRunningLimit();
+                        runningBeanLimits.compute(jr.getName(), (k, v) -> limit);
+                    }
                 }finally {
                     // adaptive semaphore permits runtime tuning:
                     // when we have nothing to do, we'll decrease available permits till one
@@ -432,12 +442,7 @@ public class JobExecutor implements BeanNameAware {
                 }
                 log.debug("Running beans:{} Running beans limit:{}", runningBeans, runningBeanLimits);
 
-                if(!jobToRun.isEmpty()) {
-                    Job jr = jobToRun.get(0);
-                    runningBeans.compute(jr.getName(), (k, v) -> v == null ? 1 : v + 1);
-                    final JobHandler executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
-                    runningBeanLimits.compute(jr.getName(), (k, v) -> executionBean.getMaxRunningLimit());
-
+                if(jr!=null) {
                     Object svp = ts.createSavepoint();
                     jr.setJobExecutor(this.getSelf());
                     try {
@@ -485,6 +490,7 @@ public class JobExecutor implements BeanNameAware {
                 }else {
                     transactionManager.commit(ts);
                     log.debug("Nothing found, TX commited");
+                    Thread.sleep(500);
                     //кто первый встал - того и тапки
                     var workerThread = CommonState.workerThread.updateAndGet(t ->{
                         if(t==null || !t.isAlive()){
@@ -493,12 +499,17 @@ public class JobExecutor implements BeanNameAware {
                         return t;
                     });
 
-                    if (workerThread.getId() == Thread.currentThread().getId()) {
-                        //noinspection BusyWait
-                        Thread.sleep(500);
-                    } else {
-                        //noinspection BusyWait
-                        Thread.sleep(threadsCount*250);
+                    idleThreads.incrementAndGet();
+                    try {
+                        if (workerThread.getId() == Thread.currentThread().getId()) {
+                            //noinspection BusyWait
+                            Thread.sleep(500);
+                        } else {
+                            //noinspection BusyWait
+                            Thread.sleep((long) (1000*idleThreads.get()));
+                        }
+                    } finally {
+                        idleThreads.decrementAndGet();
                     }
                 }
             }
