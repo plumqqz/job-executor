@@ -172,7 +172,9 @@ public class JobExecutor implements BeanNameAware {
     private JobExecutor self;
     public JobExecutor getSelf(){
         if(self!=null) return self;
-        self = applicationContext.getBean(getBeanName(), JobExecutor.class);
+        synchronized (this) {
+            self = applicationContext.getBean(getBeanName(), JobExecutor.class);
+        }
         return self;
     };
 
@@ -208,7 +210,7 @@ public class JobExecutor implements BeanNameAware {
     Semaphore workerSemaphore;
 
     @ToString.Exclude
-    private volatile int semaphorePermitsCount =0;
+    private volatile int semaphorePermitsCount = 0;
 
     private String selectRowToProcessQry = "select " +
             " * " +
@@ -377,8 +379,6 @@ public class JobExecutor implements BeanNameAware {
     private volatile boolean stopProcessing = false;
     private volatile boolean restart = false;
 
-    AtomicReference<Instant> lastDbCheck = new AtomicReference<>(Instant.now());
-
     @SneakyThrows
     public void shutdown(){
         stopProcessing = true;
@@ -490,7 +490,6 @@ public class JobExecutor implements BeanNameAware {
                 }else {
                     transactionManager.commit(ts);
                     log.debug("Nothing found, TX commited");
-                    Thread.sleep(500);
                     //кто первый встал - того и тапки
                     var workerThread = CommonState.workerThread.updateAndGet(t ->{
                         if(t==null || !t.isAlive()){
