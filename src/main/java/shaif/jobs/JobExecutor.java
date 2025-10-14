@@ -252,7 +252,7 @@ public class JobExecutor implements BeanNameAware {
             "on conflict(md5(name||parameters::text)) do nothing " +
             "returning id";
     @ToString.Exclude
-    private String getExistsJobIdQry="select id from #{schemaName}.job where md5((name || (parameters)::text))=md5(?||?::jsonb::text)";
+    private String getExistsJobIdQry="select id from #{schemaName}.job where md5((name || (parameters)::text))=md5(?||?::text)";
     @ToString.Exclude
     private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select ?, j.id from #{schemaName}.job j where j.id=?";
     @ToString.Exclude

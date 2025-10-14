@@ -31,7 +31,5 @@ public class TestJobs {
     public void testGenericJob() throws NoSuchFieldException {
         TestGJob testGJob = new TestGJob();
         log.info("Declared field:{}", (Class<?>)((ParameterizedType)testGJob.getClass().getGenericSuperclass()).getActualTypeArguments()[1]);
-
-
     }
 }
