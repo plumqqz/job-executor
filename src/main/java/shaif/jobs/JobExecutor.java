@@ -252,7 +252,7 @@ public class JobExecutor implements BeanNameAware {
             "on conflict(md5(name||parameters::text)) do nothing " +
             "returning id";
     @ToString.Exclude
-    private String getExistsJobIdQry="select id from #{schemaName}.job where md5((name || (parameters)::text))=md5(?||?::text)";
+    private String getExistingJobIdQry ="select id from #{schemaName}.job where md5(name || parameters::text)=md5(?||?::jsonb::text)";
     @ToString.Exclude
     private String insertDependsOnQry = "insert into #{schemaName}.job_depends_on(job_id,depends_on_job_id) select ?, j.id from #{schemaName}.job j where j.id=?";
     @ToString.Exclude
@@ -333,7 +333,7 @@ public class JobExecutor implements BeanNameAware {
         updateOnContinueQry = expandSpelExpression(updateOnContinueQry);
         updateOnExceptionQry = expandSpelExpression(updateOnExceptionQry);
         insertOnSubmitQry = expandSpelExpression(insertOnSubmitQry);
-        getExistsJobIdQry = expandSpelExpression(getExistsJobIdQry);
+        getExistingJobIdQry = expandSpelExpression(getExistingJobIdQry);
         insertDependsOnQry = expandSpelExpression(insertDependsOnQry);
         insertDependentOfQry = expandSpelExpression(insertDependentOfQry);
         getJobStateQry = expandSpelExpression(getJobStateQry);
@@ -544,6 +544,7 @@ public class JobExecutor implements BeanNameAware {
                 Long iid = null;
                 try {
                     String toInsert = parameters instanceof String ? (String) parameters : om.writeValueAsString(parameters);
+                    toInsertRef.set(toInsert);
 
                     var iids = jt.queryForList(insertOnSubmitQry, Long.class,
                             beanName, toInsert, runAfter.toEpochMilli() / 1000.0, parentJobId);
@@ -565,9 +566,9 @@ public class JobExecutor implements BeanNameAware {
                     }
                 } else {
                     if (ignoreExistingJob) {
-                        log.warn("Submitted job already exists in job table");
+                        log.warn("Submitted job {} already exists in job table", beanName);
                         iid = 0L;
-                        var iids = jt.queryForList(getExistsJobIdQry, Long.class, beanName, toInsertRef.get());
+                        var iids = jt.queryForList(getExistingJobIdQry, Long.class, beanName, toInsertRef.get());
                         if (!iids.isEmpty()) iid = iids.get(0);
                     } else {
                         throw new JobAlreadyExistsException(String.format("Job with name %s and specified parameters already exist", beanName));
