@@ -249,7 +249,7 @@ public class JobExecutor implements BeanNameAware {
     @ToString.Exclude
     private String insertOnSubmitQry = "insert into #{schemaName}.job(name, parameters,context,is_done,is_failed, next_run_after, status_message, parent_job_id)" +
             "values(?,?::jsonb,jsonb_build_object(),false,false,to_timestamp(?),'started',?) " +
-            "on conflict(md5(name||parameters::text)) do nothing " +
+            "on conflict(md5(name||parameters::text)) do update set next_run_after=least(job.next_run_after, excluded.next_run_after) " +
             "returning id";
     @ToString.Exclude
     private String getExistingJobIdQry ="select id from #{schemaName}.job where md5(name || parameters::text)=md5(?||?::jsonb::text)";
