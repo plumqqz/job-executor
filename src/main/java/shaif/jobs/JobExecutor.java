@@ -412,19 +412,20 @@ public class JobExecutor implements BeanNameAware {
                     ts = transactionManager.getTransaction(transactionAttribute);
                     jobToRun = jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper, toFilterOutParameter);
                     log.debug("Job to run:{}", jobToRun);
-                    if(!jobToRun.isEmpty()){
+                    if (!jobToRun.isEmpty()) {
                         jr = jobToRun.get(0);
                         executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
                         runningBeans.compute(jr.getName(), (k, v) -> v == null ? 1 : v + 1);
                         var limit = executionBean.getMaxRunningLimit();
                         runningBeanLimits.compute(jr.getName(), (k, v) -> limit);
                     }
+                } catch (Exception ex) {
+                    log.error("Exception:{}", ex.getMessage(), ex);
                 }finally {
                     // adaptive semaphore permits runtime tuning:
                     // when we have nothing to do, we'll decrease available permits till one
                     // when we have jobs to process we'll increase available permits by one until min(threadsCount, 32)
-                    assert jobToRun != null;
-                    if (jobToRun.isEmpty()) synchronized (workerSemaphore){
+                    if (jobToRun == null || jobToRun.isEmpty()) synchronized (workerSemaphore){ //jobToRun==null - у нас стряслась какая-то беда и до jt.query дело не дошло
                         if (semaphorePermitsCount > 1) {
                             semaphorePermitsCount--;
                         }else{
