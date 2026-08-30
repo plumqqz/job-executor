@@ -31,7 +31,7 @@ public class JobState {
     }
     private String message="Unknown error";
 
-    private JobState(){}
+    public JobState(){}
 
     /**
      *

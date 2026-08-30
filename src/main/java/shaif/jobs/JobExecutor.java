@@ -2,6 +2,7 @@ package shaif.jobs;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.joda.JodaModule;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer;
@@ -28,6 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.sql.*;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -182,7 +184,7 @@ public class JobExecutor implements BeanNameAware {
     String schemaName;
 
     @Value("${job-executor.job-name-filter:true}")
-    String jobNameFilter;
+    String jobNameFilter="true";
 
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
@@ -276,6 +278,7 @@ public class JobExecutor implements BeanNameAware {
         JavaTimeModule javaTimeModule = new JavaTimeModule();
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy-MM-dd H:m:s")));
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'H:m:s.SSS")));
+        om.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
         JodaModule jodaModule = new JodaModule();
         om.registerModule(javaTimeModule);
         om.registerModule(jodaModule);
@@ -383,6 +386,7 @@ public class JobExecutor implements BeanNameAware {
     public void shutdown(){
         stopProcessing = true;
         executorService.shutdown();
+        executorService.awaitTermination(10, TimeUnit.SECONDS);
     }
 
     AtomicInteger idleThreads = new AtomicInteger();
@@ -402,16 +406,17 @@ public class JobExecutor implements BeanNameAware {
                 Job jr=null;
                 JobHandler executionBean=null;
                 workerSemaphore.acquireUninterruptibly();
+                Array toFilterOutParameter=null;
                 try {
                     var toFilterOut = runningBeanLimits.entrySet().stream().filter(e -> runningBeans.get(e.getKey()) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList());
-                    Array toFilterOutParameter = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.VARCHAR.getName(), toFilterOut.toArray(emptyStringArray)));
+                    toFilterOutParameter = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.VARCHAR.getName(), toFilterOut.toArray(emptyStringArray)));
 
                     log.debug("To filter out:{}", toFilterOut);
                     log.debug("Current semaphore permits before aquire:{}, permits in semaphore:{}, idleThreads:{}", semaphorePermitsCount, workerSemaphore.availablePermits(), idleThreads.get());
 
                     ts = transactionManager.getTransaction(transactionAttribute);
                     jobToRun = jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper, toFilterOutParameter);
-                    log.debug("Job to run:{}", jobToRun);
+                    log.debug("Job to run:{}", jobToRun.isEmpty() ? "NOTHING" : jobToRun.get(0).getName());
                     if (!jobToRun.isEmpty()) {
                         jr = jobToRun.get(0);
                         executionBean = applicationContext.getBean(jr.getName(), JobHandler.class);
@@ -422,6 +427,7 @@ public class JobExecutor implements BeanNameAware {
                 } catch (Exception ex) {
                     log.error("Exception:{}", ex.getMessage(), ex);
                 }finally {
+                    if(toFilterOutParameter!=null) toFilterOutParameter.free();
                     // adaptive semaphore permits runtime tuning:
                     // when we have nothing to do, we'll decrease available permits till one
                     // when we have jobs to process we'll increase available permits by one until min(threadsCount, 32)
@@ -734,7 +740,7 @@ public class JobExecutor implements BeanNameAware {
         if(jobs.size()>1){
             throw new GetMoreThanOneRowFromJobTable("Get more than one row from job table when access by primary key");
         }
-        if(jobs.size()==0){
+        if(jobs.isEmpty()){
             return Optional.empty();
         }
         Job job = jobs.get(0);
@@ -743,6 +749,8 @@ public class JobExecutor implements BeanNameAware {
             return Optional.of(JobState.DONE(job.getStatusMessage()));
         }else if(job.isFailed()){
             return Optional.of(JobState.ABORT(job.getStatusMessage()));
+        }else if(job.getNextRunAfter().isAfter(Instant.now().plus(Duration.ofDays(365*100)))){
+            return Optional.of(JobState.STOP(job.getStatusMessage()));
         }else{
             return Optional.of(JobState.CONTINUE(job.getStatusMessage()));
         }

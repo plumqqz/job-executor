@@ -3,13 +3,13 @@ package shaif.jobs;
 import lombok.Data;
 import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.BeanNameAware;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -17,7 +17,7 @@ import java.time.Instant;
 @Data
 @Service
 @Lazy
-public class DatabaseCleanerJob implements JobHandler{
+public class DatabaseCleanerJob implements JobHandler, BeanNameAware {
     String beanName;
 
     @Autowired
