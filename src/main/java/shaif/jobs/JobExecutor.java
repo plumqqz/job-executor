@@ -37,6 +37,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
@@ -287,6 +288,12 @@ public class JobExecutor implements BeanNameAware {
         return om;
     }
 
+    private <T> T sync(Object lock, Supplier<T> supplier){
+        synchronized (lock) {
+            return supplier.get();
+        }
+    }
+
     /**
      * Число воркеров
      */
@@ -389,7 +396,6 @@ public class JobExecutor implements BeanNameAware {
         executorService.awaitTermination(10, TimeUnit.SECONDS);
     }
 
-    AtomicInteger idleThreads = new AtomicInteger();
     final private ConcurrentHashMap<String, Integer> runningBeans = new ConcurrentHashMap<>();
     final private ConcurrentHashMap<String, Integer> runningBeanLimits = new ConcurrentHashMap<>();
     final private String[] emptyStringArray = new String[]{};
@@ -408,11 +414,11 @@ public class JobExecutor implements BeanNameAware {
                 workerSemaphore.acquireUninterruptibly();
                 Array toFilterOutParameter=null;
                 try {
-                    var toFilterOut = runningBeanLimits.entrySet().stream().filter(e -> runningBeans.get(e.getKey()) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList());
+                    var toFilterOut = sync(runningBeans, () -> runningBeanLimits.entrySet().stream().filter(e -> runningBeans.get(e.getKey()) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList()));
                     toFilterOutParameter = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.VARCHAR.getName(), toFilterOut.toArray(emptyStringArray)));
 
                     log.debug("To filter out:{}", toFilterOut);
-                    log.debug("Current semaphore permits before aquire:{}, permits in semaphore:{}, idleThreads:{}", semaphorePermitsCount, workerSemaphore.availablePermits(), idleThreads.get());
+                    log.debug("Current semaphore permits before aquire:{}, permits in semaphore:{}", semaphorePermitsCount, workerSemaphore.availablePermits());
 
                     ts = transactionManager.getTransaction(transactionAttribute);
                     jobToRun = jt.query(selectRowToProcessQry, jobBeanPropertyRowMapper, toFilterOutParameter);
@@ -430,7 +436,9 @@ public class JobExecutor implements BeanNameAware {
                     if(toFilterOutParameter!=null) toFilterOutParameter.free();
                     // adaptive semaphore permits runtime tuning:
                     // when we have nothing to do, we'll decrease available permits till one
-                    // when we have jobs to process we'll increase available permits by one until min(threadsCount, 32)
+                    // when we have jobs to process we'll increase available permits by one until min(threadsCount, 32).
+                    // we do it before the job execution because it may take long time and we want allow work for another
+                    // workers during the execution
                     if (jobToRun == null || jobToRun.isEmpty()) synchronized (workerSemaphore){ //jobToRun==null - у нас стряслась какая-то беда и до jt.query дело не дошло
                         if (semaphorePermitsCount > 1) {
                             semaphorePermitsCount--;
@@ -495,27 +503,18 @@ public class JobExecutor implements BeanNameAware {
                         runningBeans.compute(jr.getName(), (k, v) -> v == null ? 0 : v - 1);
                     }
                 }else {
+                    if (ts == null) {
+                        log.error("Transaction is null");
+                        throw new RuntimeException("Transaction is null");
+                    }
                     transactionManager.commit(ts);
                     log.debug("Nothing found, TX commited");
                     //кто первый встал - того и тапки
-                    var workerThread = CommonState.workerThread.updateAndGet(t ->{
-                        if(t==null || !t.isAlive()){
-                            return Thread.currentThread();
-                        }
-                        return t;
-                    });
-
-                    idleThreads.incrementAndGet();
                     try {
-                        if (workerThread.getId() == Thread.currentThread().getId()) {
-                            //noinspection BusyWait
-                            Thread.sleep(500);
-                        } else {
-                            //noinspection BusyWait
-                            Thread.sleep((long) (1000*idleThreads.get()));
-                        }
-                    } finally {
-                        idleThreads.decrementAndGet();
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        stopProcessing=true;
+                        throw new RuntimeException(e);
                     }
                 }
             }

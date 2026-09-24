@@ -22,7 +22,7 @@ import java.util.Optional;
 @Setter
 @Slf4j
 public class Job {
-    static ObjectMapper om = new ObjectMapper();
+    static final ObjectMapper om = new ObjectMapper();
     static {
         JavaTimeModule javaTimeModule = new JavaTimeModule();
         javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy-MM-dd H:m:s")));
