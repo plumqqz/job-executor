@@ -35,7 +35,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -273,6 +272,14 @@ public class JobExecutor implements BeanNameAware {
             " and (j.is_done and not j.is_failed) and j.next_run_after<now()-make_interval(mins:=120)";
 
     @ToString.Exclude
+    protected String lockKeyQry="with tq as("+
+            " select * from tsy.job_locks where ref=? for update skip locked"+
+            ")"+
+            " insert into tsy.job_locks as jl(ref, job_id, last_locked_at)values(?, ?, clock_timestamp()::timestamp)"+
+            "  on conflict(ref) do update set job_id=excluded.job_id, last_locked_at=case when jl.job_id=excluded.job_id then jl.last_locked_at else excluded.last_locked_at end"+
+            "  where not exists(select * from tsy.job j where not j.is_done and not j.is_failed and j.id=jl.job_id and j.id<>excluded.job_id)";
+
+    @ToString.Exclude
     final ObjectMapper om = new ObjectMapper();
     {
         om.registerModule(new JavaTimeModule());
@@ -349,6 +356,7 @@ public class JobExecutor implements BeanNameAware {
         getJobStateQry = expandSpelExpression(getJobStateQry);
         clearJobDependsOnQry = expandSpelExpression(clearJobDependsOnQry);
         clearJobQry = expandSpelExpression(clearJobQry);
+        lockKeyQry = expandSpelExpression(lockKeyQry);
         if(threadsCount==0){
             throw new RuntimeException("threadCount is not set");
         }
@@ -414,7 +422,7 @@ public class JobExecutor implements BeanNameAware {
                 workerSemaphore.acquireUninterruptibly();
                 Array toFilterOutParameter=null;
                 try {
-                    var toFilterOut = sync(runningBeans, () -> runningBeanLimits.entrySet().stream().filter(e -> runningBeans.get(e.getKey()) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList()));
+                    var toFilterOut = sync(runningBeans, () -> runningBeanLimits.entrySet().stream().filter(e -> coalesce(runningBeans.get(e.getKey()),0) >= e.getValue()).map(v -> v.getKey()).collect(Collectors.toList()));
                     toFilterOutParameter = jt.execute((Connection cn) -> cn.createArrayOf(JDBCType.VARCHAR.getName(), toFilterOut.toArray(emptyStringArray)));
 
                     log.debug("To filter out:{}", toFilterOut);
@@ -521,6 +529,11 @@ public class JobExecutor implements BeanNameAware {
         } catch (Exception e) {
             log.error("Got transaction exception:", e);
         }
+    }
+
+    public static <T> T coalesce(T ...items) {
+        for(T i : items) if(i != null) return i;
+        return null;
     }
 
     /**
@@ -852,4 +865,9 @@ public class JobExecutor implements BeanNameAware {
     public void setBeanName(String s) {
         this.beanName = s;
     }
+
+    public boolean lockKey(String lockKey, long id) {
+        return 1==jt.update(lockKeyQry, lockKey, lockKey, id);
+    }
+
 }

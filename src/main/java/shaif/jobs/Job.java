@@ -421,4 +421,8 @@ public class Job {
 
     public void waitFor(JobExecution jes){}
 
+    public boolean lockKey(String key){
+        return jobExecutor.lockKey(key, getId());
+    }
+
 }
