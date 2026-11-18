@@ -332,7 +332,13 @@ public class JobExecutor implements BeanNameAware {
                 "unique(depends_on_job_id, job_id),\n" +
                 " return_value jsonb\n" +
                 ");\n" +
-                "create unique index on #{schemaName}.job((md5(name||parameters::text)));\n";
+                "create unique index on #{schemaName}.job((md5(name||parameters::text)));\n" +
+                "create table #{schemaName}.job_locks (\n" +
+                "  ref text NOT NULL,\n" +
+                "  job_id int8 NULL,\n" +
+                "  last_locked_at timestamp NULL,\n" +
+                "  CONSTRAINT job_locks_pkey PRIMARY KEY (ref)\n" +
+                ");";
         jt.execute(expandSpelExpression(createTablesScript));
     }
 
