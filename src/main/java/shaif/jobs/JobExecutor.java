@@ -272,12 +272,14 @@ public class JobExecutor implements BeanNameAware {
             " and (j.is_done and not j.is_failed) and j.next_run_after<now()-make_interval(mins:=120)";
 
     @ToString.Exclude
-    protected String lockKeyQry="with tq as("+
-            " select * from tsy.job_locks where ref=? for update skip locked"+
-            ")"+
+    protected String lockKeyQry="with sl as("+
+            " select true cnt from #{schemaName}.job_locks where ref=? for update skip locked"+
+            ")," +
+            "tl as(select * from #{schemaName}.job_locks where ref=?)"+
             " insert into tsy.job_locks as jl(ref, job_id, last_locked_at)values(?, ?, clock_timestamp()::timestamp)"+
             "  on conflict(ref) do update set job_id=excluded.job_id, last_locked_at=case when jl.job_id=excluded.job_id then jl.last_locked_at else excluded.last_locked_at end"+
-            "  where not exists(select * from tsy.job j where not j.is_done and not j.is_failed and j.id=jl.job_id and j.id<>excluded.job_id)";
+            "  where not exists(select * from tsy.job j where not j.is_done and not j.is_failed and j.id=jl.job_id and j.id<>abs(excluded.job_id))" +
+            " and (not exists(select * from tl) or exists(select * from sl))";
 
     @ToString.Exclude
     final ObjectMapper om = new ObjectMapper();
@@ -873,7 +875,7 @@ public class JobExecutor implements BeanNameAware {
     }
 
     public boolean lockKey(String lockKey, long id) {
-        return 1==jt.update(lockKeyQry, lockKey, lockKey, id);
+        return 1==jt.update(lockKeyQry, lockKey, lockKey, lockKey, id);
     }
 
 }

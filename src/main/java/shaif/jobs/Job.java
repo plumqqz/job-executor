@@ -425,4 +425,8 @@ public class Job {
         return jobExecutor.lockKey(key, getId());
     }
 
+    public boolean unlockKey(String key){
+        return jobExecutor.lockKey(key, -getId());
+    }
+
 }
