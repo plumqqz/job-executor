@@ -36,6 +36,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -268,6 +269,12 @@ public class JobExecutor implements BeanNameAware {
             "  where not exists(select * from tsy.job j where not j.is_done and not j.is_failed and j.id=jl.job_id and j.id<>abs(excluded.job_id))" +
             " and (not exists(select * from tl) or exists(select * from sl))";
 
+    protected String getContextQry = "select context::text from #{schemaName}.job where id=?";
+    protected String setContextQry = "update #{schemaName}.job set context=?::jsonb where id=?";
+
+    protected String getParametersQry = "select parameters::text from #{schemaName}.job where id=?";
+    protected String setParametersQry = "update #{schemaName}.job set parameters=?::jsonb where id=?";
+
     @ToString.Exclude
     protected String addLockKeyQry ="update #{schemaName}.job set awaited_locks=array(select ? union select v from unnest(coalesce(awaited_locks,array[]::text[])) as u(v)) where id=?";
 
@@ -361,6 +368,10 @@ public class JobExecutor implements BeanNameAware {
         lockKeyQry = expandSpelExpression(lockKeyQry);
         addLockKeyQry = expandSpelExpression(addLockKeyQry);
         removeLockKeyQry = expandSpelExpression(removeLockKeyQry);
+        setContextQry = expandSpelExpression(setContextQry);
+        getContextQry = expandSpelExpression(getContextQry);
+        getParametersQry = expandSpelExpression(getParametersQry);
+        setParametersQry = expandSpelExpression(setParametersQry);
 
         if(threadsCount==0){
             throw new RuntimeException("threadCount is not set");
@@ -871,18 +882,101 @@ public class JobExecutor implements BeanNameAware {
         this.beanName = s;
     }
 
+    /**
+     * Lock any string. Locks are just rows in job_locks table with job id of job owning the lock.
+     * Lock is released when job calls unlockKey or becomes is_done or is_failed
+     * @param lockKey key to lock
+     * @param id id of job trying to lock
+     * @return true if lock obtained false otherwise
+     */
     public boolean lockKey(String lockKey, long id) {
         var rv = 1==jt.update(lockKeyQry, lockKey, lockKey, lockKey, id);
         removeLockKey(lockKey, id);
         return rv;
     }
 
+    /** Add specified lock key to wait on - until the key is not unlocked, the job will not be selected for execution.
+     * <b>It is very important to not call lockKey on each attempt, but wait on the lock key</b> - with big count of jobs doing so job owning the lock
+     * could not get selected for execution and lock will never release.
+     * Typical pattern:
+     * <pre>
+     *   if(!job.lockKey("lockName")){
+     *      job.addLockKey("lockName");
+     *      return JobState.CONTINUE("Waiting for lock");
+     *   }
+     * </pre>
+     *
+     * So the job will not be called until "lockName" key will not be released - by calling unlockKey or by
+     * completion of helding job.
+     *
+     * @param lockKey key to lock
+     * @param id locked job id
+     * @return
+     */
     public boolean addLockKey(String lockKey, long id) {
         return 1==jt.update(addLockKeyQry, lockKey, id);
     }
 
+    /**
+     * Removes lock key. See {@link addLockKey}
+     * @param lockKey
+     * @param id
+     * @return
+     */
     public boolean removeLockKey(String lockKey, long id) {
         return 1==jt.update(removeLockKeyQry, lockKey, id);
+    }
+
+    /**
+     * Change job context of already submitted job.
+     * @param jobId id of the job to change context
+     * @param changer function to change context. It receives the context as string and must return modified value
+     */
+    public void changeContext(long jobId, Function<String, String> changer) {
+        jt.update(setContextQry, changer.apply(jt.queryForObject(getContextQry, String.class, jobId)), jobId);
+    }
+
+    /**
+     * Change parameters of already submitted job.
+     * @param jobId id of the job to change context
+     * @param changer function to change parameters. It receives the parameters as string and must return modified value
+     */
+    public void changeParameters(long jobId, Function<String, String> changer) {
+        jt.update(setParametersQry, changer.apply(jt.queryForObject(getParametersQry, String.class, jobId)), jobId);
+    }
+
+    /**
+     * Change parameters of already submitted job.
+     * @param handler some GenericJobHandler to change parameters
+     * @param jobId id of the job to change context
+     * @param changer - function to change parameters. It receives the parameters as parameter of type P of GenericJobHandler&lt;P,C&gt;
+     *                and must return modified value
+     */
+    public <P,C> void changeParameters(GenericJobHandler<P,C> handler, long jobId, Function<P, P> changer){
+        changeParameters(jobId, s->{
+            try {
+                return getOm().writeValueAsString(changer.apply(getOm().readValue(s, handler.getPClass())));
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    /**
+     * Change context of already submitted job.
+     * @param handler some GenericJobHandler to change parameters
+     * @param jobId id of the job to change context
+     * @param changer function to change parameters. It receives the parameters as parameter of type C of GenericJobHandler&lt;P,C&gt;
+     *                and must return modified value
+     */
+    public <P,C> void changeContext(GenericJobHandler<P,C> handler, long jobId, Function<C, C> changer){
+        changeParameters(jobId, s->{
+            try {
+                return getOm().writeValueAsString(changer.apply(getOm().readValue(s, handler.getCClass())));
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        });
     }
 
 }
