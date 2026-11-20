@@ -220,23 +220,10 @@ public class JobExecutor implements BeanNameAware {
             " and not exists(select * from #{schemaName}.job_depends_on jdo, #{schemaName}.job j2 where job.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done)" +
             " and job.next_run_after<=now()" +
             " and #{jobNameFilter}" +
+            " and case when cardinality(job.awaited_locks)>0 then not exists(select * from #{schemaName}.job_locks l join #{schemaName}.job j1 on l.job_id=j1.id where not j1.is_done and not j1.is_failed and l.ref=any(job.awaited_locks) and job.id<>j1.id) else true end " +
             " and job.name<>all(?)" +
             " for update skip locked" +
             " limit 1";
-
-    private String selectRowToProcessQryEx = "select * " +
-            " from #{schemaName}.job j " +
-            " where j.next_run_after<=now() and not j.is_done and not j.is_failed " +
-            "        and " +
-            "        case when not exists(select * from playground.job_depends_on jdo, playground.job j2 where j.id=jdo.job_id and jdo.depends_on_job_id=j2.id and not j2.is_done) then\n" +
-            "             case when pg_try_advisory_lock(991237, (j.id%2000000000)::int) then " +
-            "                  case when pg_try_advisory_lock(991238, (j.id%2000000000)::int) then true " +
-            "                       else not pg_advisory_unlock(991237, (j.id%2000000000)::int) " +
-            "                  end " +
-            "             end " +
-            "        end " +
-            " order by j.id " +
-            "limit ? ";
 
     @ToString.Exclude
     private String updateOnAbortQry = "update #{schemaName}.job set status_message=?, is_failed=true where id=?";
@@ -282,6 +269,13 @@ public class JobExecutor implements BeanNameAware {
             " and (not exists(select * from tl) or exists(select * from sl))";
 
     @ToString.Exclude
+    protected String addLockKeyQry ="update #{schemaName}.job set awaited_locks=array(select ? union select v from unnest(coalesce(awaited_locks,array[]::text[])) as u(v)) where id=?";
+
+    @ToString.Exclude
+    protected String removeLockKeyQry="update #{schemaName}.job set awaited_locks=array(select v from unnest(coalesce(awaited_locks,array[]::text[])) as u(v) except select ?) where id=?";
+
+
+    @ToString.Exclude
     final ObjectMapper om = new ObjectMapper();
     {
         om.registerModule(new JavaTimeModule());
@@ -325,7 +319,8 @@ public class JobExecutor implements BeanNameAware {
                 " next_run_after timestamptz not null default now(),\n" +
                 " status_message text,\n" +
                 " parent_job_id bigint,\n" +
-                " return_value jsonb\n" +
+                " return_value jsonb," +
+                " awaited_locks text[]\n" +
                 ");\n" +
                 "create table #{schemaName}.job_depends_on(\n" +
                 " job_id bigint not null,\n" +
@@ -351,7 +346,6 @@ public class JobExecutor implements BeanNameAware {
         createTables();
         log.info("Starting with worker number={}", threadsCount);
         selectRowToProcessQry = expandSpelExpression(selectRowToProcessQry);
-        selectRowToProcessQryEx = expandSpelExpression(selectRowToProcessQryEx);
         updateOnAbortQry = expandSpelExpression(updateOnAbortQry);
         updateOnDoneQry = expandSpelExpression(updateOnDoneQry);
         updateOnStopQry = expandSpelExpression(updateOnStopQry);
@@ -365,6 +359,9 @@ public class JobExecutor implements BeanNameAware {
         clearJobDependsOnQry = expandSpelExpression(clearJobDependsOnQry);
         clearJobQry = expandSpelExpression(clearJobQry);
         lockKeyQry = expandSpelExpression(lockKeyQry);
+        addLockKeyQry = expandSpelExpression(addLockKeyQry);
+        removeLockKeyQry = expandSpelExpression(removeLockKeyQry);
+
         if(threadsCount==0){
             throw new RuntimeException("threadCount is not set");
         }
@@ -875,7 +872,17 @@ public class JobExecutor implements BeanNameAware {
     }
 
     public boolean lockKey(String lockKey, long id) {
-        return 1==jt.update(lockKeyQry, lockKey, lockKey, lockKey, id);
+        var rv = 1==jt.update(lockKeyQry, lockKey, lockKey, lockKey, id);
+        removeLockKey(lockKey, id);
+        return rv;
+    }
+
+    public boolean addLockKey(String lockKey, long id) {
+        return 1==jt.update(addLockKeyQry, lockKey, id);
+    }
+
+    public boolean removeLockKey(String lockKey, long id) {
+        return 1==jt.update(removeLockKeyQry, lockKey, id);
     }
 
 }

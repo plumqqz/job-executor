@@ -429,4 +429,12 @@ public class Job {
         return jobExecutor.lockKey(key, -getId());
     }
 
+    public boolean addLockKey(String key) {
+        return jobExecutor.addLockKey(key, getId());
+    }
+
+    public boolean removeLockKey(String key) {
+        return jobExecutor.addLockKey(key, getId());
+    }
+
 }
